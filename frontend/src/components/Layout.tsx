@@ -1,0 +1,267 @@
+import { useEffect } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
+
+import { api } from "../lib/api";
+import {
+  BarChart3,
+  Boxes,
+  Building2,
+  LogOut,
+  Package,
+  ShoppingCart,
+  Truck,
+  UserCog,
+  Users,
+  Wallet,
+  type LucideIcon,
+} from "lucide-react";
+
+import { useBusinessSettings } from "../hooks/useBusinessSettings";
+import { syncOfflineSales } from "../lib/offline";
+import { useAuthStore } from "../store/auth";
+import { OfflineBanner } from "./OfflineBanner";
+
+type MenuItem = { to: string; label: string; Icon: LucideIcon };
+
+/** Иконка таб-бара/сайдбара по маршруту. Один источник истины — менять здесь. */
+const ROUTE_ICONS: Record<string, LucideIcon> = {
+  "/sale": ShoppingCart,
+  "/stock": Package,
+  "/suppliers": Building2,
+  "/products": Boxes,
+  "/customers": Users,
+  "/deliveries": Truck,
+  "/cash-withdrawals": Wallet,
+  "/reports": BarChart3,
+  "/employees": UserCog,
+};
+
+const item = (to: string, label: string): MenuItem => ({ to, label, Icon: ROUTE_ICONS[to] });
+
+// Полный список всех пунктов меню в порядке отображения.
+// Ниже фильтруется по роли + overrides.
+const ALL_ITEMS: MenuItem[] = [
+  item("/sale", "Касса"),
+  item("/stock", "Склад"),
+  item("/suppliers", "Поставщики"),
+  item("/products", "Товары"),
+  item("/customers", "Клиенты"),
+  item("/deliveries", "Доставки"),
+  item("/cash-withdrawals", "Инкас."),
+  item("/reports", "Отчёты"),
+  item("/employees", "Сотрудники"),
+];
+
+// Дефолтный набор путей для каждой роли — что видит сотрудник, если владелец не настраивал.
+const DEFAULT_ALLOWED: Record<string, Set<string>> = {
+  seller: new Set(["/sale", "/customers", "/deliveries", "/cash-withdrawals"]),
+  warehouse: new Set(["/stock", "/products", "/suppliers"]),
+  owner: new Set(ALL_ITEMS.map((m) => m.to)),
+};
+
+const ROLE_LABEL: Record<string, string> = {
+  owner: "Владелец",
+  seller: "Продавец",
+  warehouse: "Склад",
+};
+
+export function Layout() {
+  const role = useAuthStore((s) => s.role);
+  const token = useAuthStore((s) => s.token);
+  const setAuth = useAuthStore((s) => s.setAuth);
+  const queryClient = useQueryClient();
+  const { orgName, type: businessType, hasDelivery } = useBusinessSettings();
+  const isGrocery = businessType === "grocery";
+
+  const meQuery = useQuery({
+    queryKey: ["auth-me"],
+    enabled: !!token,
+    queryFn: async () =>
+      (await api.get("/auth/me")).data as {
+        name?: string;
+        role?: string;
+        menu_overrides?: Record<string, boolean> | null;
+      },
+  });
+  const overrides = meQuery.data?.menu_overrides ?? null;
+  const myName = meQuery.data?.name ?? "";
+  const myRoleLabel = ROLE_LABEL[meQuery.data?.role ?? role] ?? meQuery.data?.role ?? role;
+
+  // Строим меню из ПОЛНОГО списка пунктов: для каждого решаем, показывать или нет.
+  // Источник истины: override (если задан) поверх дефолта роли.
+  const defaultAllowed = DEFAULT_ALLOWED[role] ?? new Set<string>();
+  const menu = ALL_ITEMS.filter((m) => {
+    // Поставщики — только для продуктовых магазинов.
+    if (m.to === "/suppliers" && !isGrocery) return false;
+    // Доставки — только если модуль включён в настройках магазина.
+    if (m.to === "/deliveries" && !hasDelivery) return false;
+    // Сотрудники — только владельцу.
+    if (m.to === "/employees") return role === "owner";
+    if (overrides && Object.prototype.hasOwnProperty.call(overrides, m.to)) {
+      return overrides[m.to] === true;
+    }
+    return defaultAllowed.has(m.to);
+  });
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    const handler = () => {
+      void syncOfflineSales();
+    };
+    window.addEventListener("online", handler);
+    void syncOfflineSales();
+    return () => window.removeEventListener("online", handler);
+  }, []);
+
+  const logout = () => {
+    setAuth(null);
+    queryClient.clear();
+    navigate("/login");
+  };
+
+  const tabs = menu.slice(0, 5);
+  // Если меню короче 5 — показываем дополнительный таб «Выход».
+  const hasLogoutTab = menu.length < 5;
+
+  return (
+    <div className="min-h-screen bg-slate-50">
+      <div className="mx-auto flex max-w-7xl gap-4 px-3 py-3 md:px-4">
+        <aside className="hidden w-[200px] shrink-0 rounded-2xl bg-white p-3 shadow md:sticky md:top-3 md:flex md:max-h-[calc(100vh-1.5rem)] md:flex-col">
+          <div style={{ padding: "12px 8px" }}>
+            <img
+              src="/logo.png"
+              alt="VoltPos"
+              style={{ height: "40px", width: "auto", objectFit: "contain", margin: "0 auto", display: "block" }}
+            />
+            {orgName ? (
+              <p className="mt-1 text-center text-sm font-semibold text-slate-700">{orgName}</p>
+            ) : null}
+          </div>
+          <nav className="space-y-1">
+            {menu.map(({ to, label, Icon }) => {
+              const active = location.pathname === to;
+              return (
+                <Link
+                  key={to}
+                  to={to}
+                  className={`flex items-center gap-2 rounded-xl px-3 py-2 text-sm ${
+                    active ? "bg-indigo-50 text-primary" : "text-slate-700 hover:bg-slate-100"
+                  }`}
+                >
+                  <Icon size={18} strokeWidth={1.8} />
+                  <span>{label}</span>
+                </Link>
+              );
+            })}
+          </nav>
+          <div className="mt-auto">
+            {myName ? (
+              <div className="mb-2 rounded-xl bg-slate-50 px-3 py-2 text-xs">
+                <p className="truncate font-semibold text-slate-700" title={myName}>
+                  {myName}
+                </p>
+                <p className="text-slate-500">{myRoleLabel}</p>
+              </div>
+            ) : null}
+            <button
+              onClick={logout}
+              className="flex w-full items-center gap-2 rounded-xl border border-slate-200 px-3 py-2 text-sm text-slate-700 hover:bg-slate-100"
+            >
+              <LogOut size={18} strokeWidth={1.8} />
+              <span>Выйти</span>
+            </button>
+          </div>
+        </aside>
+
+        <div
+          className="min-w-0 flex-1 md:pb-0"
+          style={{ paddingBottom: "calc(72px + env(safe-area-inset-bottom))" }}
+        >
+          <OfflineBanner />
+          <Outlet />
+        </div>
+      </div>
+
+      {/* === Mobile tab bar (тёмный, с blur, фиолетовые акценты) === */}
+      <nav
+        className="fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around border-t md:hidden"
+        style={{
+          background: "rgba(19, 22, 42, 0.95)",
+          backdropFilter: "blur(20px)",
+          WebkitBackdropFilter: "blur(20px)",
+          borderTopColor: "rgba(108,92,231,0.15)",
+          paddingLeft: "8px",
+          paddingRight: "8px",
+          paddingBottom: "calc(8px + env(safe-area-inset-bottom))",
+          paddingTop: "8px",
+        }}
+      >
+        {tabs.map(({ to, label, Icon }) => (
+          <TabButton key={to} to={to} label={label} Icon={Icon} active={location.pathname === to} />
+        ))}
+        {hasLogoutTab && (
+          <button
+            onClick={logout}
+            className="relative flex min-w-[56px] flex-col items-center justify-center gap-1 rounded-xl border-0 bg-transparent px-3 py-2 transition-transform duration-100 active:scale-[0.92]"
+            style={{ color: "#a0a8c0", opacity: 0.6 }}
+          >
+            <LogOut size={22} strokeWidth={1.8} />
+            <span style={{ fontSize: "10px", letterSpacing: "0.2px", fontWeight: 500 }}>Выход</span>
+          </button>
+        )}
+      </nav>
+    </div>
+  );
+}
+
+/** Один таб-элемент. Активный — на полупрозрачной фиолетовой плашке,
+ *  с тонкой полоской-индикатором сверху. */
+function TabButton({
+  to,
+  label,
+  Icon,
+  active,
+}: {
+  to: string;
+  label: string;
+  Icon: LucideIcon;
+  active: boolean;
+}) {
+  return (
+    <Link
+      to={to}
+      className="relative flex min-w-[56px] flex-col items-center justify-center gap-1 rounded-xl px-3 py-2 transition-all duration-200 active:scale-[0.92]"
+      style={{
+        background: active ? "rgba(108,92,231,0.12)" : "transparent",
+        color: active ? "#a29bfe" : "#a0a8c0",
+        opacity: active ? 1 : 0.6,
+      }}
+    >
+      {active && (
+        <span
+          aria-hidden
+          className="absolute left-1/2 -translate-x-1/2"
+          style={{
+            top: "-1px",
+            width: "20px",
+            height: "2px",
+            background: "#6c5ce7",
+            borderRadius: "0 0 2px 2px",
+          }}
+        />
+      )}
+      <Icon size={22} strokeWidth={1.8} />
+      <span
+        style={{
+          fontSize: "10px",
+          letterSpacing: "0.2px",
+          fontWeight: active ? 600 : 500,
+        }}
+      >
+        {label}
+      </span>
+    </Link>
+  );
+}

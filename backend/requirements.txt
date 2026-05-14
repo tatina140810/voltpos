@@ -1,0 +1,16 @@
+fastapi
+uvicorn[standard]
+sqlalchemy
+asyncpg
+alembic
+pydantic-settings
+python-jose[cryptography]
+passlib[bcrypt]==1.7.4
+bcrypt<4.0
+python-barcode
+Pillow
+reportlab
+qrcode[pil]
+python-multipart
+pywebpush
+openpyxl

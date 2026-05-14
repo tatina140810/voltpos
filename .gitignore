@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Виртуальные окружения
+.venv/
+venv/
+env/
+
+# Секреты — НИКОГДА не коммитить
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*credentials*.json
+
+# Node / frontend
+node_modules/
+frontend/dist/
+frontend/dist-ssr/
+*.local
+
+# Логи и базы
+*.log
+*.sqlite
+*.sqlite3
+*.db
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Бэкапы (если кто-то скачает на локалку)
+backups/
+*.sql.gz
+*.dump

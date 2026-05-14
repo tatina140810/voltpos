@@ -1,0 +1,18 @@
+export const MODULE_LABELS: { key: string; label: string; icon: string }[] = [
+  { key: "delivery", label: "Доставка и установка", icon: "🚚" },
+  { key: "warranty", label: "Гарантийный учёт", icon: "🛡" },
+  { key: "serial_numbers", label: "Серийные номера", icon: "🔢" },
+  { key: "repairs", label: "Ремонты", icon: "🔧" },
+  { key: "installment", label: "Рассрочка и долги", icon: "💳" },
+  { key: "expiry_date", label: "Срок годности", icon: "📅" },
+  { key: "weight_scale", label: "Весовые товары", icon: "⚖️" },
+  { key: "sizes_colors", label: "Размеры и цвета", icon: "👕" },
+  { key: "bulk_units", label: "Несколько единиц", icon: "📦" },
+  { key: "fast_checkout", label: "Быстрая касса", icon: "⚡️" },
+  { key: "fitting_room", label: "Примерочная", icon: "🪞" },
+  { key: "age_groups", label: "Возрастные группы", icon: "👶" },
+  { key: "pet_types", label: "Виды животных", icon: "🐾" },
+  { key: "prescription", label: "Рецептурные товары", icon: "📋" },
+  { key: "batch_tracking", label: "Учёт партий", icon: "🧾" },
+  { key: "min_order_qty", label: "Мин. кол-во в заказе", icon: "📐" },
+];

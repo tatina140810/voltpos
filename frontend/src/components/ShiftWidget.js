@@ -1,0 +1,68 @@
+import { jsx as _jsx, jsxs as _jsxs, Fragment as _Fragment } from "react/jsx-runtime";
+import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Clock, FileText, LogOut, Play } from "lucide-react";
+import { api } from "../lib/api";
+function fmt(v) {
+    return Number(v || 0).toLocaleString("ru-RU", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtTime(iso) {
+    if (!iso)
+        return "—";
+    return new Date(iso).toLocaleString("ru-RU", {
+        day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit",
+    });
+}
+export function ShiftWidget() {
+    const qc = useQueryClient();
+    const [openModal, setOpenModal] = useState(false);
+    const [closeModal, setCloseModal] = useState(false);
+    const [reportShown, setReportShown] = useState(null);
+    const [openingCash, setOpeningCash] = useState("0");
+    const [closingCash, setClosingCash] = useState("");
+    const currentQuery = useQuery({
+        queryKey: ["shifts-current"],
+        queryFn: async () => (await api.get("/shifts/current")).data,
+        refetchInterval: 60000,
+    });
+    const shift = currentQuery.data?.shift ?? null;
+    const openMutation = useMutation({
+        mutationFn: async () => {
+            await api.post("/shifts/open", { opening_cash: Number(openingCash) || 0 });
+        },
+        onSuccess: () => {
+            setOpenModal(false);
+            setOpeningCash("0");
+            qc.invalidateQueries({ queryKey: ["shifts-current"] });
+        },
+        onError: (err) => {
+            const status = err.response?.status;
+            const detail = err.response?.data?.detail;
+            alert(status === 409 ? (detail || "Смена уже открыта") : "Не удалось открыть смену");
+        },
+    });
+    const xReportMutation = useMutation({
+        mutationFn: async () => {
+            if (!shift)
+                throw new Error("no shift");
+            return (await api.get(`/shifts/${shift.id}/report`)).data;
+        },
+        onSuccess: (data) => setReportShown(data),
+    });
+    const closeMutation = useMutation({
+        mutationFn: async () => {
+            return (await api.post("/shifts/close", { closing_cash_actual: Number(closingCash) || 0 })).data;
+        },
+        onSuccess: (data) => {
+            setCloseModal(false);
+            setClosingCash("");
+            setReportShown(data);
+            qc.invalidateQueries({ queryKey: ["shifts-current"] });
+        },
+        onError: () => alert("Не удалось закрыть смену"),
+    });
+    return (_jsxs("div", { className: "mb-3 rounded-xl border border-slate-200 bg-white p-3 shadow-sm", children: [_jsxs("div", { className: "flex flex-wrap items-center justify-between gap-2 text-sm", children: [_jsxs("div", { className: "flex items-center gap-2", children: [_jsx(Clock, { size: 16, className: shift ? "text-emerald-600" : "text-slate-400" }), shift ? (_jsxs(_Fragment, { children: [_jsx("span", { className: "font-semibold text-emerald-700", children: "\u0421\u043C\u0435\u043D\u0430 \u043E\u0442\u043A\u0440\u044B\u0442\u0430" }), _jsxs("span", { className: "text-slate-500", children: ["\u0441 ", fmtTime(shift.opened_at)] }), _jsxs("span", { className: "text-slate-500", children: ["\u00B7 \u043A\u0430\u0441\u0441\u0430 ", fmt(shift.opening_cash), " \u0441\u043E\u043C"] })] })) : (_jsx("span", { className: "text-slate-500", children: "\u0421\u043C\u0435\u043D\u0430 \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0442\u0430" }))] }), _jsx("div", { className: "flex flex-wrap gap-2", children: shift ? (_jsxs(_Fragment, { children: [_jsxs("button", { type: "button", onClick: () => xReportMutation.mutate(), disabled: xReportMutation.isPending, className: "inline-flex items-center gap-1 rounded-lg border border-slate-300 px-3 py-1 text-xs hover:bg-slate-50", children: [_jsx(FileText, { size: 14 }), " X-\u043E\u0442\u0447\u0451\u0442"] }), _jsxs("button", { type: "button", onClick: () => setCloseModal(true), className: "inline-flex items-center gap-1 rounded-lg bg-red-600 px-3 py-1 text-xs font-semibold text-white hover:bg-red-700", children: [_jsx(LogOut, { size: 14 }), " \u0417\u0430\u043A\u0440\u044B\u0442\u044C \u0441\u043C\u0435\u043D\u0443"] })] })) : (_jsxs("button", { type: "button", onClick: () => setOpenModal(true), className: "inline-flex items-center gap-1 rounded-lg bg-emerald-600 px-3 py-1 text-xs font-semibold text-white hover:bg-emerald-700", children: [_jsx(Play, { size: 14 }), " \u041E\u0442\u043A\u0440\u044B\u0442\u044C \u0441\u043C\u0435\u043D\u0443"] })) })] }), openModal ? (_jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4", children: _jsxs("div", { className: "w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl", children: [_jsx("h3", { className: "mb-3 text-lg font-semibold", children: "\u041E\u0442\u043A\u0440\u044B\u0442\u044C \u0441\u043C\u0435\u043D\u0443" }), _jsx("label", { className: "mb-1 block text-xs text-slate-500", children: "\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u043D\u0430\u043B\u0438\u0447\u043D\u044B\u0445 \u0432 \u043A\u0430\u0441\u0441\u0435 \u043D\u0430 \u0441\u0442\u0430\u0440\u0442\u0435" }), _jsx("input", { type: "text", inputMode: "decimal", value: openingCash, onChange: (e) => setOpeningCash(e.target.value), onFocus: (e) => { if (e.target.value === "0")
+                                setOpeningCash(""); }, className: "h-11 w-full rounded-lg border border-slate-300 px-3 text-right tabular-nums" }), _jsx("p", { className: "mt-1 text-xs text-slate-500", children: "\u0421\u043E\u043C. \u042D\u0442\u043E \u00AB\u043E\u0441\u0442\u0430\u0442\u043E\u043A \u043D\u0430 \u0441\u0442\u0430\u0440\u0442\u0435\u00BB \u2014 \u043E\u0442 \u043D\u0435\u0433\u043E \u0441\u0447\u0438\u0442\u0430\u044E\u0442\u0441\u044F \u0438\u0442\u043E\u0433\u0438 \u0441\u043C\u0435\u043D\u044B." }), _jsxs("div", { className: "mt-4 flex gap-2", children: [_jsx("button", { type: "button", onClick: () => openMutation.mutate(), disabled: openMutation.isPending, className: "flex-1 rounded-lg bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60", children: openMutation.isPending ? "Открываю…" : "Открыть" }), _jsx("button", { type: "button", onClick: () => setOpenModal(false), className: "rounded-lg border border-slate-300 px-4 py-2 text-sm", children: "\u041E\u0442\u043C\u0435\u043D\u0430" })] })] }) })) : null, closeModal && shift ? (_jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4", children: _jsxs("div", { className: "w-full max-w-sm rounded-2xl bg-white p-5 shadow-xl", children: [_jsx("h3", { className: "mb-3 text-lg font-semibold", children: "\u0417\u0430\u043A\u0440\u044B\u0442\u044C \u0441\u043C\u0435\u043D\u0443" }), _jsx("label", { className: "mb-1 block text-xs text-slate-500", children: "\u0421\u043A\u043E\u043B\u044C\u043A\u043E \u043D\u0430\u043B\u0438\u0447\u043D\u044B\u0445 \u043F\u043E \u0444\u0430\u043A\u0442\u0443 \u0432 \u043A\u0430\u0441\u0441\u0435 \u0441\u0435\u0439\u0447\u0430\u0441" }), _jsx("input", { type: "text", inputMode: "decimal", value: closingCash, onChange: (e) => setClosingCash(e.target.value), placeholder: "0", autoFocus: true, className: "h-11 w-full rounded-lg border border-slate-300 px-3 text-right tabular-nums" }), _jsx("p", { className: "mt-1 text-xs text-slate-500", children: "\u041F\u0435\u0440\u0435\u0441\u0447\u0438\u0442\u0430\u0439 \u043D\u0430\u043B\u0438\u0447\u043D\u044B\u0435 \u0440\u0443\u043A\u0430\u043C\u0438 \u0438 \u0432\u043F\u0438\u0448\u0438. \u0421\u0438\u0441\u0442\u0435\u043C\u0430 \u043F\u043E\u043A\u0430\u0436\u0435\u0442 \u0440\u0430\u0441\u0445\u043E\u0436\u0434\u0435\u043D\u0438\u0435 \u0441 \u0440\u0430\u0441\u0447\u0451\u0442\u043D\u044B\u043C \u043E\u0441\u0442\u0430\u0442\u043A\u043E\u043C." }), _jsxs("div", { className: "mt-4 flex gap-2", children: [_jsx("button", { type: "button", onClick: () => closeMutation.mutate(), disabled: closeMutation.isPending || closingCash === "", className: "flex-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60", children: closeMutation.isPending ? "Закрываю…" : "Закрыть и получить Z-отчёт" }), _jsx("button", { type: "button", onClick: () => setCloseModal(false), className: "rounded-lg border border-slate-300 px-4 py-2 text-sm", children: "\u041E\u0442\u043C\u0435\u043D\u0430" })] })] }) })) : null, reportShown ? (_jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4", onClick: () => setReportShown(null), children: _jsxs("div", { className: "max-h-[90dvh] w-full max-w-md overflow-auto rounded-2xl bg-white p-5 shadow-xl", onClick: (e) => e.stopPropagation(), children: [_jsxs("div", { className: "mb-3 flex items-start justify-between", children: [_jsxs("div", { children: [_jsx("h3", { className: "text-lg font-semibold", children: reportShown.report_kind === "Z" ? "Z-отчёт (закрытие)" : "X-отчёт (промежуточный)" }), _jsxs("p", { className: "text-xs text-slate-500", children: ["\u0421\u043C\u0435\u043D\u0430 #", reportShown.shift.id, " \u00B7 \u043E\u0442\u043A\u0440\u044B\u0442\u0430 ", fmtTime(reportShown.shift.opened_at), reportShown.shift.closed_at ? ` · закрыта ${fmtTime(reportShown.shift.closed_at)}` : ""] })] }), _jsx("button", { onClick: () => setReportShown(null), className: "text-2xl text-slate-500", "aria-label": "\u0417\u0430\u043A\u0440\u044B\u0442\u044C", children: "\u00D7" })] }), _jsx("table", { className: "w-full text-sm", children: _jsxs("tbody", { children: [_jsxs("tr", { className: "border-b", children: [_jsx("td", { className: "py-2 text-slate-600", children: "\u041F\u0440\u043E\u0434\u0430\u0436" }), _jsx("td", { className: "py-2 text-right tabular-nums font-semibold", children: reportShown.totals.sales_count })] }), _jsxs("tr", { className: "border-b", children: [_jsx("td", { className: "py-2 text-slate-600", children: "\u0412\u043E\u0437\u0432\u0440\u0430\u0442\u043E\u0432" }), _jsx("td", { className: "py-2 text-right tabular-nums", children: reportShown.totals.returned_count })] }), _jsxs("tr", { className: "border-b bg-slate-50", children: [_jsx("td", { className: "py-2 text-slate-600", children: "\u0421\u0443\u043C\u043C\u0430 \u043F\u0440\u043E\u0434\u0430\u0436" }), _jsx("td", { className: "py-2 text-right tabular-nums font-bold", children: fmt(reportShown.totals.sales_total) })] }), _jsxs("tr", { className: "border-b", children: [_jsx("td", { className: "py-2 text-slate-600", children: "\uD83D\uDCB5 \u041D\u0430\u043B\u0438\u0447\u043D\u044B\u043C\u0438" }), _jsx("td", { className: "py-2 text-right tabular-nums", children: fmt(reportShown.totals.cash_in) })] }), _jsxs("tr", { className: "border-b", children: [_jsx("td", { className: "py-2 text-slate-600", children: "\uD83D\uDCB3 \u041A\u0430\u0440\u0442\u043E\u0439" }), _jsx("td", { className: "py-2 text-right tabular-nums", children: fmt(reportShown.totals.card_in) })] }), _jsxs("tr", { className: "border-b", children: [_jsx("td", { className: "py-2 text-slate-600", children: "\uD83D\uDCF1 \u041F\u0435\u0440\u0435\u0432\u043E\u0434\u043E\u043C" }), _jsx("td", { className: "py-2 text-right tabular-nums", children: fmt(reportShown.totals.transfer_in) })] }), _jsxs("tr", { className: "border-b", children: [_jsx("td", { className: "py-2 text-slate-600", children: "\u0418\u043D\u043A\u0430\u0441\u0441\u0430\u0446\u0438\u044F" }), _jsxs("td", { className: "py-2 text-right tabular-nums text-red-700", children: ["\u2212", fmt(reportShown.totals.inkas)] })] }), _jsxs("tr", { className: "border-b bg-slate-50", children: [_jsx("td", { className: "py-2 text-slate-600", children: "\u041A\u0430\u0441\u0441\u0430 \u043D\u0430 \u0441\u0442\u0430\u0440\u0442\u0435" }), _jsx("td", { className: "py-2 text-right tabular-nums", children: fmt(reportShown.totals.opening_cash) })] }), _jsxs("tr", { className: "border-b bg-emerald-50", children: [_jsx("td", { className: "py-2 font-semibold", children: "\u0414\u043E\u043B\u0436\u043D\u043E \u0431\u044B\u0442\u044C \u043D\u0430\u043B\u0438\u0447\u043D\u044B\u0445" }), _jsx("td", { className: "py-2 text-right tabular-nums text-base font-bold text-emerald-700", children: fmt(reportShown.totals.expected_cash) })] }), reportShown.shift.closing_cash_actual !== null ? (_jsxs(_Fragment, { children: [_jsxs("tr", { className: "border-b", children: [_jsx("td", { className: "py-2 text-slate-600", children: "\u0424\u0430\u043A\u0442. \u0432 \u043A\u0430\u0441\u0441\u0435" }), _jsx("td", { className: "py-2 text-right tabular-nums font-semibold", children: fmt(reportShown.shift.closing_cash_actual) })] }), _jsxs("tr", { children: [_jsx("td", { className: "py-3 font-semibold", children: "\u0420\u0430\u0441\u0445\u043E\u0436\u0434\u0435\u043D\u0438\u0435" }), _jsxs("td", { className: `py-3 text-right tabular-nums text-base font-bold ${Number(reportShown.discrepancy) === 0 ? "text-emerald-700"
+                                                            : Number(reportShown.discrepancy) > 0 ? "text-amber-700"
+                                                                : "text-red-700"}`, children: [Number(reportShown.discrepancy) > 0 ? "+" : "", fmt(reportShown.discrepancy ?? "0")] })] })] })) : null] }) }), _jsx("button", { type: "button", onClick: () => setReportShown(null), className: "mt-4 w-full rounded-lg bg-slate-100 px-4 py-2 text-sm hover:bg-slate-200", children: "\u0417\u0430\u043A\u0440\u044B\u0442\u044C" })] }) })) : null] }));
+}

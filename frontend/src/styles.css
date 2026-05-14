@@ -1,0 +1,21 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  color: #111827;
+}
+
+/* Быстрая касса для продуктовых магазинов: крупные элементы для сенсорного экрана. */
+.fast-checkout button {
+  min-height: 56px;
+  font-size: 1.05rem;
+}
+.fast-checkout input,
+.fast-checkout select {
+  min-height: 48px;
+  font-size: 1.05rem;
+}
+.fast-checkout .text-sm { font-size: 0.95rem; }
+.fast-checkout .text-xs { font-size: 0.85rem; }

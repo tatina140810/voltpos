@@ -125,19 +125,36 @@ export function ScanInvoicePage() {
       setSupplier(data.supplier ?? "");
       setInvoiceNumber(data.invoice_number ?? "");
       setInvoiceDate(data.invoice_date ?? "");
-      // Сразу пытаемся найти товар по штрихкоду в нашей базе.
+      // Двухступенчатое сопоставление с базой товаров:
+      //   1) штрихкод совпал → берём ИМЯ из базы (ИИ может прочитать криво «1Л СУЛТАН-ЧАЙ ЗЕДЛ»);
+      //   2) штрихкода нет / не нашли, но ИМЯ совпало → подставляем ШТРИХКОД из базы.
+      // Так не плодим дублирующие товары.
       const products = productsQuery.data ?? [];
       const byBarcode = new Map<string, Product>();
+      const byName = new Map<string, Product>();
+      const norm = (s: string) =>
+        s.toLowerCase()
+          .replace(/[«»"',.;:!?()/\\-]/g, " ")
+          .replace(/\s+/g, " ")
+          .trim();
       for (const p of products) {
         if (p.barcode) byBarcode.set(p.barcode, p);
+        if (p.name) byName.set(norm(p.name), p);
       }
       setRows(
         (data.items ?? []).map((it, idx) => {
-          const matched = it.barcode ? byBarcode.get(it.barcode) : undefined;
+          const rawBarcode = (it.barcode ?? "").trim();
+          const rawName = (it.name ?? "").trim();
+          let matched: Product | undefined;
+          // Шаг 1: матч по штрихкоду — ШК доминирует над названием.
+          if (rawBarcode) matched = byBarcode.get(rawBarcode);
+          // Шаг 2: если по ШК не нашли — пытаемся по нормализованному имени.
+          if (!matched && rawName) matched = byName.get(norm(rawName));
           return {
             id: `${Date.now()}-${idx}`,
-            name: it.name ?? "",
-            barcode: it.barcode ?? "",
+            // Если нашли — берём канонические поля из базы, чтобы не плодить дубли.
+            name: matched ? matched.name : rawName,
+            barcode: matched ? (matched.barcode ?? rawBarcode) : rawBarcode,
             quantity: String(it.quantity ?? 0),
             price: String(it.price ?? 0),
             matched_product_id: matched ? matched.id : null,
@@ -156,11 +173,15 @@ export function ScanInvoicePage() {
   };
   const removeRow = (id: string) => setRows((prev) => prev.filter((r) => r.id !== id));
 
-  // При изменении штрихкода — пытаемся снова найти товар.
+  // При изменении штрихкода — снова ищем товар и подтягиваем каноничное имя.
   const onBarcodeBlur = (id: string, barcode: string) => {
     const products = productsQuery.data ?? [];
     const matched = barcode ? products.find((p) => p.barcode === barcode) : null;
-    updateRow(id, { matched_product_id: matched ? matched.id : null });
+    if (matched) {
+      updateRow(id, { matched_product_id: matched.id, name: matched.name });
+    } else {
+      updateRow(id, { matched_product_id: null });
+    }
   };
 
   const acceptMutation = useMutation({
@@ -527,6 +548,8 @@ export function ScanInvoicePage() {
               updateRow(scanningRowId, {
                 barcode: trimmed,
                 matched_product_id: matched ? matched.id : null,
+                // Если нашли — заменяем название на каноничное (из базы), иначе оставляем как было.
+                ...(matched ? { name: matched.name } : {}),
               });
               setScanningRowId(null);
               return matched

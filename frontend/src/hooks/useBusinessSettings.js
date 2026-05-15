@@ -54,5 +54,7 @@ export function useBusinessSettings() {
         hasPrescription: hasModule("prescription"),
         hasBatchTracking: hasModule("batch_tracking"),
         hasMinOrderQty: hasModule("min_order_qty"),
+        // Платная фича распознавания накладных. Без явного включения супер-админом — выключена.
+        hasInvoiceScan: Boolean(data?.has_invoice_scan),
     };
 }

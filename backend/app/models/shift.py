@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -26,3 +27,6 @@ class Shift(Base, TimestampMixin):
     closing_cash_actual: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     status: Mapped[str] = mapped_column(String(10), nullable=False, default="open")  # open|closed
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # Снимок итогов на момент закрытия — Z-отчёт «замораживается» и не зависит
+    # от позднейших возвратов в новой смене.
+    totals_snapshot: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

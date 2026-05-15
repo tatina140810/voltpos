@@ -72,6 +72,8 @@ class OrgUpdateRequest(BaseModel):
     weighed_barcode_prefix: str | None = Field(default=None, pattern=r"^\d{1,2}$")
     weighed_code_length: int | None = Field(default=None, ge=1, le=10)
     weighed_grams_length: int | None = Field(default=None, ge=1, le=10)
+    has_invoice_scan: bool | None = None  # платная фича распознавания накладных
+    invoice_scan_quota: int | None = Field(default=None, ge=0)  # лимит сканов в месяц
 
 
 class OrgEmployee(BaseModel):
@@ -107,6 +109,9 @@ class OrgDetails(BaseModel):
     business_type: str | None = None
     business_modules: dict[str, bool] = {}
     business_units: list[str] = []
+    has_invoice_scan: bool = False
+    invoice_scan_quota: int = 200
+    invoice_scan_used: int = 0  # за текущий месяц
     employees: list[OrgEmployee]
     payments: list[PaymentItem]
 

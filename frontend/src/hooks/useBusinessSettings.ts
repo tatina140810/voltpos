@@ -33,6 +33,7 @@ export type BusinessSettings = {
   hasPrescription: boolean;
   hasBatchTracking: boolean;
   hasMinOrderQty: boolean;
+  hasInvoiceScan: boolean;
 };
 
 /**
@@ -90,5 +91,7 @@ export function useBusinessSettings(): BusinessSettings {
     hasPrescription: hasModule("prescription"),
     hasBatchTracking: hasModule("batch_tracking"),
     hasMinOrderQty: hasModule("min_order_qty"),
+    // Платная фича распознавания накладных. Без явного включения супер-админом — выключена.
+    hasInvoiceScan: Boolean((data as unknown as { has_invoice_scan?: boolean })?.has_invoice_scan),
   };
 }

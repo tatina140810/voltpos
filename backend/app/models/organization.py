@@ -38,4 +38,8 @@ class Organization(Base, TimestampMixin):
     weighed_grams_length: Mapped[int | None] = mapped_column(Integer, nullable=True)
     business_type: Mapped[str | None] = mapped_column(String(50), nullable=True)
     business_settings: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict, server_default="{}")
+    # Платная фича распознавания накладных через ИИ. Включается только супер-админом.
+    has_invoice_scan: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False, server_default="false")
+    # Месячная квота сканов накладных. Супер-админ может увеличить за доплату.
+    invoice_scan_quota: Mapped[int] = mapped_column(Integer, nullable=False, default=200, server_default="200")
     is_deleted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

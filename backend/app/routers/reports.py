@@ -112,7 +112,6 @@ async def summary_report(
             await db.execute(
                 select(DebtPayment).where(
                     DebtPayment.sale_id.in_(sale_ids),
-                    DebtPayment.is_deleted.is_(False),
                 )
             )
         ).scalars().all():
@@ -161,7 +160,6 @@ async def summary_report(
     # должна учитываться в дне фактического получения денег, а не в дне создания продажи.
     dp_stmt = select(DebtPayment).where(
         DebtPayment.org_id == user.org_id,
-        DebtPayment.is_deleted.is_(False),
     )
     if from_:
         dp_stmt = dp_stmt.where(func.date(DebtPayment.created_at) >= from_)
@@ -322,10 +320,12 @@ async def summary_report(
     # === 8b. Зарплата и прочие расходы из PeriodExpense за период (для расчёта прибыли) ===
     from app.models.period_expense import PeriodExpense
     pe_stmt = select(PeriodExpense).where(PeriodExpense.org_id == user.org_id)
-    if from_:
-        pe_stmt = pe_stmt.where(PeriodExpense.period_from >= from_)
+    # Пересечение интервалов: запись попадает если её период пересекает запрошенный
+    # (period_from ≤ to AND period_to ≥ from_). Иначе расход «месяц» не попал бы в «неделю».
     if to:
-        pe_stmt = pe_stmt.where(PeriodExpense.period_to <= to)
+        pe_stmt = pe_stmt.where(PeriodExpense.period_from <= to)
+    if from_:
+        pe_stmt = pe_stmt.where(PeriodExpense.period_to >= from_)
     period_expenses_rows = list((await db.execute(pe_stmt)).scalars().all())
     salary_total = _zero()
     other_expenses_total = _zero()

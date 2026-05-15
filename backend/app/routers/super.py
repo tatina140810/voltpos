@@ -391,6 +391,17 @@ async def get_org(org_id: int, db: AsyncSession = Depends(get_db)) -> OrgDetails
         .scalars()
         .all()
     )
+    # Использование скан-квоты за текущий месяц.
+    from datetime import datetime as _dt, timezone as _tz
+    from app.models.invoice_scan_usage import InvoiceScanUsage as _Usage
+    _ym = _dt.now(_tz.utc).strftime("%Y-%m")
+    _usage_row = (
+        await db.execute(
+            select(_Usage).where(_Usage.org_id == org.id, _Usage.year_month == _ym)
+        )
+    ).scalar_one_or_none()
+    invoice_scan_used = _usage_row.count if _usage_row else 0
+
     settings = org.business_settings or {}
     return OrgDetails(
         id=org.id,
@@ -409,6 +420,9 @@ async def get_org(org_id: int, db: AsyncSession = Depends(get_db)) -> OrgDetails
         business_type=org.business_type,
         business_modules=dict(settings.get("modules", {})),
         business_units=list(settings.get("units", [])),
+        has_invoice_scan=bool(org.has_invoice_scan),
+        invoice_scan_quota=int(org.invoice_scan_quota or 200),
+        invoice_scan_used=invoice_scan_used,
         employees=[
             OrgEmployee(
                 id=u.id,

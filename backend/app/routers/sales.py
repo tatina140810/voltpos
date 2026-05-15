@@ -44,7 +44,9 @@ async def _stock_balance(db: AsyncSession, product_id: int):
     in_q = (
         await db.execute(
             select(func.coalesce(func.sum(eff_qty), 0)).where(
-                StockMovement.product_id == product_id, StockMovement.type == StockMovementType.in_stock
+                StockMovement.product_id == product_id,
+                StockMovement.type == StockMovementType.in_stock,
+                StockMovement.is_deleted.is_(False),
             )
         )
     ).scalar_one()
@@ -53,6 +55,7 @@ async def _stock_balance(db: AsyncSession, product_id: int):
             select(func.coalesce(func.sum(eff_qty), 0)).where(
                 StockMovement.product_id == product_id,
                 StockMovement.type.in_([StockMovementType.out, StockMovementType.writeoff]),
+                StockMovement.is_deleted.is_(False),
             )
         )
     ).scalar_one()
@@ -61,7 +64,17 @@ async def _stock_balance(db: AsyncSession, product_id: int):
 
 async def _create_sale(payload: SaleCreate, db: AsyncSession, current_user: User) -> Sale:
     if payload.offline_id:
-        exists = (await db.execute(select(Sale).where(Sale.offline_id == payload.offline_id))).scalar_one_or_none()
+        # Идемпотентность: продажа с таким offline_id может быть только в этой же организации.
+        # Без org_id фильтра был теоретический риск UUID-коллизии вернуть чужую продажу.
+        exists = (
+            await db.execute(
+                select(Sale).where(
+                    Sale.offline_id == payload.offline_id,
+                    Sale.org_id == current_user.org_id,
+                    Sale.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
         if exists:
             return exists
 
@@ -337,17 +350,24 @@ async def return_sale_items(
     ).scalar_one_or_none()
     if not sale:
         raise HTTPException(status_code=404, detail="Продажа не найдена")
-    if sale.status == SaleStatus.returned:
-        raise HTTPException(status_code=400, detail="Эта продажа уже возвращена")
+    # NB: status == returned больше не блокируем целиком — позиции защищены через returned_at.
+    # Это позволяет частичные возвраты разными чеками.
     if not payload.return_item_ids:
         raise HTTPException(status_code=400, detail="Не выбрано ни одной позиции для возврата")
 
     all_sale_items = list(
         (await db.execute(select(SaleItem).where(SaleItem.sale_id == sale.id))).scalars().all()
     )
-    items_to_return = [it for it in all_sale_items if it.id in payload.return_item_ids]
+    # Защита от двойного возврата: позиции с returned_at уже возвращены, игнорируем.
+    items_to_return = [
+        it for it in all_sale_items
+        if it.id in payload.return_item_ids and it.returned_at is None
+    ]
     if not items_to_return:
-        raise HTTPException(status_code=400, detail="Указанные позиции не принадлежат этой продаже")
+        raise HTTPException(
+            status_code=400,
+            detail="Все указанные позиции уже были возвращены ранее или не принадлежат этой продаже",
+        )
 
     # Подгружаем продукты возвращаемых позиций — нужно чтобы понять weighed/штучный.
     return_product_ids = {it.product_id for it in items_to_return}
@@ -383,6 +403,8 @@ async def return_sale_items(
             )
         )
         return_total += (it.price or Decimal("0")) * eff_qty
+        # Помечаем позицию возвращённой — повторный возврат той же позиции не сработает.
+        it.returned_at = datetime.now(timezone.utc)
 
     # Уменьшаем total продажи и пропорционально вычитаем оплату по способам.
     # Это нужно чтобы:
@@ -405,7 +427,8 @@ async def return_sale_items(
         sale.paid_transfer = (sale.paid_transfer or Decimal("0")) - transfer_back
     sale.total = max(Decimal("0"), (sale.total or Decimal("0")) - return_total)
 
-    if len(items_to_return) == len(all_sale_items):
+    # Если ВСЕ позиции продажи теперь возвращены (с учётом прошлых частичных) — статус returned.
+    if all(it.returned_at is not None for it in all_sale_items):
         sale.status = SaleStatus.returned
 
     await db.commit()

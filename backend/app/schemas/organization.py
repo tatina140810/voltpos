@@ -16,6 +16,7 @@ class OrganizationOut(BaseModel):
     weighed_grams_length: int | None = None
     business_type: str | None = None
     business_settings: dict = {}
+    has_invoice_scan: bool = False
 
     model_config = {"from_attributes": True}
 

@@ -169,7 +169,12 @@ async def shift_report(
     if shift.cashier_id != user.id and user.role.value != "owner":
         raise HTTPException(status_code=403, detail="Нет доступа к чужой смене")
 
-    totals = await _compute_shift_totals(db, shift)
+    # Для закрытой смены берём снимок (если есть) — иначе возвраты в новой смене
+    # ретроактивно меняли бы Z-отчёт старой.
+    if shift.status == "closed" and shift.totals_snapshot:
+        totals = shift.totals_snapshot
+    else:
+        totals = await _compute_shift_totals(db, shift)
 
     diff = None
     if shift.closing_cash_actual is not None:
@@ -193,15 +198,18 @@ async def close_shift(
     shift = await _find_open_shift(db, user)
     if not shift:
         raise HTTPException(status_code=400, detail="У вас нет открытой смены")
+    # Сначала считаем итоги (по «живому» состоянию), потом помечаем закрытой и сохраняем snapshot.
+    totals = await _compute_shift_totals(db, shift)
+
     shift.status = "closed"
     shift.closed_at = datetime.now(timezone.utc)
     shift.closing_cash_actual = payload.closing_cash_actual or _zero()
+    shift.totals_snapshot = totals  # «замораживаем» Z-отчёт
     if payload.notes is not None:
         shift.notes = payload.notes
     await db.commit()
     await db.refresh(shift)
 
-    totals = await _compute_shift_totals(db, shift)
     diff = str(Decimal(shift.closing_cash_actual) - Decimal(totals["expected_cash"]))
     return {
         "shift": _shift_dict(shift),

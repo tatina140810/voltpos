@@ -19,7 +19,7 @@ import logging
 from datetime import date, timedelta
 from typing import Any
 
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, select
 
 from app.database import SessionLocal
 from app.models.organization import Organization
@@ -66,7 +66,10 @@ async def find_expiring_for_org(db, org_id: int, today: date) -> list[dict[str, 
             in_sum.label("in_qty"),
             out_sum.label("out_qty"),
         )
-        .outerjoin(StockMovement, Product.id == StockMovement.product_id)
+        .outerjoin(
+            StockMovement,
+            and_(Product.id == StockMovement.product_id, StockMovement.is_deleted.is_(False)),
+        )
         .where(
             Product.org_id == org_id,
             Product.is_deleted.is_(False),

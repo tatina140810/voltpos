@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 
@@ -7,13 +7,17 @@ import {
   BarChart3,
   Boxes,
   Building2,
+  ClipboardList,
   LogOut,
+  Menu as MenuIcon,
   Package,
+  ScanLine,
   ShoppingCart,
   Truck,
   UserCog,
   Users,
   Wallet,
+  X,
   type LucideIcon,
 } from "lucide-react";
 
@@ -35,6 +39,8 @@ const ROUTE_ICONS: Record<string, LucideIcon> = {
   "/cash-withdrawals": Wallet,
   "/reports": BarChart3,
   "/employees": UserCog,
+  "/scan": ScanLine,
+  "/revisions": ClipboardList,
 };
 
 const item = (to: string, label: string): MenuItem => ({ to, label, Icon: ROUTE_ICONS[to] });
@@ -44,6 +50,8 @@ const item = (to: string, label: string): MenuItem => ({ to, label, Icon: ROUTE_
 const ALL_ITEMS: MenuItem[] = [
   item("/sale", "Касса"),
   item("/stock", "Склад"),
+  item("/scan", "Скан накладной"),
+  item("/revisions", "Ревизия"),
   item("/suppliers", "Поставщики"),
   item("/products", "Товары"),
   item("/customers", "Клиенты"),
@@ -56,7 +64,7 @@ const ALL_ITEMS: MenuItem[] = [
 // Дефолтный набор путей для каждой роли — что видит сотрудник, если владелец не настраивал.
 const DEFAULT_ALLOWED: Record<string, Set<string>> = {
   seller: new Set(["/sale", "/customers", "/deliveries", "/cash-withdrawals"]),
-  warehouse: new Set(["/stock", "/products", "/suppliers"]),
+  warehouse: new Set(["/stock", "/products", "/suppliers", "/revisions"]),
   owner: new Set(ALL_ITEMS.map((m) => m.to)),
 };
 
@@ -71,7 +79,7 @@ export function Layout() {
   const token = useAuthStore((s) => s.token);
   const setAuth = useAuthStore((s) => s.setAuth);
   const queryClient = useQueryClient();
-  const { orgName, type: businessType, hasDelivery } = useBusinessSettings();
+  const { orgName, type: businessType, hasDelivery, hasInvoiceScan } = useBusinessSettings();
   const isGrocery = businessType === "grocery";
 
   const meQuery = useQuery({
@@ -96,6 +104,13 @@ export function Layout() {
     if (m.to === "/suppliers" && !isGrocery) return false;
     // Доставки — только если модуль включён в настройках магазина.
     if (m.to === "/deliveries" && !hasDelivery) return false;
+    // Сканирование накладной — платная фича, включается супер-админом.
+    if (m.to === "/scan") {
+      if (!hasInvoiceScan) return false;
+      return role === "owner" || role === "warehouse";
+    }
+    // Ревизия — owner и warehouse, всегда (не зависит от модулей).
+    if (m.to === "/revisions") return role === "owner" || role === "warehouse";
     // Сотрудники — только владельцу.
     if (m.to === "/employees") return role === "owner";
     if (overrides && Object.prototype.hasOwnProperty.call(overrides, m.to)) {
@@ -121,9 +136,17 @@ export function Layout() {
     navigate("/login");
   };
 
-  const tabs = menu.slice(0, 5);
-  // Если меню короче 5 — показываем дополнительный таб «Выход».
-  const hasLogoutTab = menu.length < 5;
+  // Приоритет пунктов в нижнем таб-баре: то что чаще всего нужно кассиру/владельцу.
+  // Берём первые 4 по этому приоритету (если они есть в menu), остальное — в шторке «Ещё».
+  const tabPriority = ["/sale", "/stock", "/customers", "/reports", "/revisions", "/scan", "/cash-withdrawals", "/suppliers", "/products", "/deliveries", "/employees"];
+  const ordered = tabPriority
+    .map((p) => menu.find((m) => m.to === p))
+    .filter((m): m is MenuItem => Boolean(m));
+  // Дозаполняем хвостом из menu (на случай если в priority что-то забыли).
+  for (const m of menu) if (!ordered.includes(m)) ordered.push(m);
+  const mainTabs = ordered.slice(0, 4);
+  const moreItems = ordered.slice(4);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   return (
     <div className="min-h-screen bg-slate-50">
@@ -198,10 +221,21 @@ export function Layout() {
           paddingTop: "8px",
         }}
       >
-        {tabs.map(({ to, label, Icon }) => (
+        {mainTabs.map(({ to, label, Icon }) => (
           <TabButton key={to} to={to} label={label} Icon={Icon} active={location.pathname === to} />
         ))}
-        {hasLogoutTab && (
+        {/* 5-я кнопка: «Ещё» — открывает шторку с остальными пунктами + Выход.
+            Если ничего лишнего нет — сразу кнопка «Выход». */}
+        {moreItems.length > 0 ? (
+          <button
+            onClick={() => setMoreOpen(true)}
+            className="relative flex min-w-[56px] flex-col items-center justify-center gap-1 rounded-xl border-0 bg-transparent px-3 py-2 transition-transform duration-100 active:scale-[0.92]"
+            style={{ color: "#a0a8c0", opacity: 0.6 }}
+          >
+            <MenuIcon size={22} strokeWidth={1.8} />
+            <span style={{ fontSize: "10px", letterSpacing: "0.2px", fontWeight: 500 }}>Ещё</span>
+          </button>
+        ) : (
           <button
             onClick={logout}
             className="relative flex min-w-[56px] flex-col items-center justify-center gap-1 rounded-xl border-0 bg-transparent px-3 py-2 transition-transform duration-100 active:scale-[0.92]"
@@ -212,6 +246,64 @@ export function Layout() {
           </button>
         )}
       </nav>
+
+      {/* === Шторка «Ещё» (только мобильный) === */}
+      {moreOpen ? (
+        <div
+          className="fixed inset-0 z-[60] bg-black/50 md:hidden"
+          onClick={() => setMoreOpen(false)}
+        >
+          <div
+            className="absolute bottom-0 left-0 right-0 rounded-t-2xl bg-white p-4 shadow-2xl"
+            style={{ paddingBottom: "calc(16px + env(safe-area-inset-bottom))" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-2 flex items-center justify-between">
+              <h3 className="text-base font-semibold text-slate-800">Меню</h3>
+              <button
+                onClick={() => setMoreOpen(false)}
+                className="rounded-lg p-1 text-slate-500 hover:bg-slate-100"
+                aria-label="Закрыть"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            {myName ? (
+              <div className="mb-3 rounded-xl bg-slate-50 px-3 py-2 text-sm">
+                <p className="truncate font-semibold text-slate-700">{myName}</p>
+                <p className="text-xs text-slate-500">{myRoleLabel}</p>
+              </div>
+            ) : null}
+            <div className="grid grid-cols-3 gap-2">
+              {moreItems.map(({ to, label, Icon }) => {
+                const active = location.pathname === to;
+                return (
+                  <Link
+                    key={to}
+                    to={to}
+                    onClick={() => setMoreOpen(false)}
+                    className={`flex flex-col items-center gap-1 rounded-xl border px-2 py-3 text-xs ${
+                      active
+                        ? "border-primary bg-indigo-50 text-primary"
+                        : "border-slate-200 bg-white text-slate-700"
+                    }`}
+                  >
+                    <Icon size={22} strokeWidth={1.8} />
+                    <span className="text-center leading-tight">{label}</span>
+                  </Link>
+                );
+              })}
+            </div>
+            <button
+              onClick={() => { setMoreOpen(false); logout(); }}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700 hover:bg-red-100"
+            >
+              <LogOut size={18} strokeWidth={1.8} />
+              <span>Выйти</span>
+            </button>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

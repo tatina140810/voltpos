@@ -1,5 +1,7 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
-from sqlalchemy import case, func, select
+from sqlalchemy import and_, case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -63,25 +65,31 @@ async def last_revision(
     # факт ≈ current_balance, expected = current_balance − delta.
     # Это точно если после ревизии не было других движений по этим товарам.
     product_ids_in_revision = list({m.product_id for m, _ in movements})
-    current_balance: dict[int, int] = {}
+    current_balance: dict[int, float] = {}
     product_prices: dict[int, tuple[float, float]] = {}
     if product_ids_in_revision:
+        # Для весовых товаров реальное кол-во в quantity_decimal, для штучных в quantity.
+        # COALESCE даёт корректную сумму. Удалённые движения исключаем — иначе остаток врёт.
+        eff_qty = func.coalesce(StockMovement.quantity_decimal, StockMovement.quantity)
         bal_rows = (
             await db.execute(
                 select(
                     StockMovement.product_id,
                     func.sum(
                         case(
-                            (StockMovement.type == StockMovementType.in_stock, StockMovement.quantity),
-                            else_=-StockMovement.quantity,
+                            (StockMovement.type == StockMovementType.in_stock, eff_qty),
+                            else_=-eff_qty,
                         )
                     ).label("balance"),
                 )
-                .where(StockMovement.product_id.in_(product_ids_in_revision))
+                .where(
+                    StockMovement.product_id.in_(product_ids_in_revision),
+                    StockMovement.is_deleted.is_(False),
+                )
                 .group_by(StockMovement.product_id)
             )
         ).all()
-        current_balance = {pid: int(b or 0) for pid, b in bal_rows}
+        current_balance = {pid: float(b or 0) for pid, b in bal_rows}
 
         # Цены: закупочная и продажная — для расчёта стоимости недостач/излишков.
         price_rows = (
@@ -186,7 +194,10 @@ async def list_movements(
             await db.execute(
                 select(StockMovement, User.name.label("created_by_name"))
                 .outerjoin(User, StockMovement.created_by == User.id)
-                .where(StockMovement.org_id == user.org_id)
+                .where(
+                    StockMovement.org_id == user.org_id,
+                    StockMovement.is_deleted.is_(False),
+                )
                 .order_by(StockMovement.id.desc())
                 .limit(limit)
             )
@@ -201,6 +212,8 @@ async def list_movements(
             "quantity": float(r.StockMovement.quantity_decimal)
                 if r.StockMovement.quantity_decimal is not None
                 else r.StockMovement.quantity,
+            "quantity_decimal": str(r.StockMovement.quantity_decimal) if r.StockMovement.quantity_decimal is not None else None,
+            "cost_price": str(r.StockMovement.cost_price) if r.StockMovement.cost_price is not None else None,
             "reason": r.StockMovement.reason,
             "created_at": r.StockMovement.created_at.isoformat() if r.StockMovement.created_at else None,
             "created_by_name": r.created_by_name,
@@ -242,24 +255,32 @@ async def stock_summary(db: AsyncSession = Depends(get_db), _: User = Depends(ge
             Product.name,
             Product.barcode,
             Product.sale_price,
+            Product.purchase_price,
             in_sum.label("in_qty"),
             out_sum.label("out_qty"),
             min_expiry.label("min_expiry_date"),
             last_cost.label("last_cost_price"),
         )
-        .outerjoin(StockMovement, Product.id == StockMovement.product_id)
+        .outerjoin(
+            StockMovement,
+            and_(Product.id == StockMovement.product_id, StockMovement.is_deleted.is_(False)),
+        )
         .where(Product.is_deleted.is_(False))
         .group_by(Product.id)
     )
     rows = (await db.execute(stmt)).all()
     out: list[StockSummary] = []
     for row in rows:
-        cost = row.last_cost_price
+        # Цена закупки в столбце «Закупки» — Product.purchase_price (текущая в карточке).
+        # last_cost_price из приходов используем только если в карточке не задана.
+        cost = row.purchase_price if row.purchase_price else row.last_cost_price
         sale = row.sale_price
         margin: float | None = None
         try:
-            if cost and sale and float(sale) > 0:
-                margin = round((float(sale) - float(cost)) / float(sale) * 100.0, 2)
+            # Наценка: «сколько % сверх закупки». Привычно для розничной торговли.
+            # Формула: (продажа − закупка) / закупка × 100.
+            if cost and float(cost) > 0 and sale is not None:
+                margin = round((float(sale) - float(cost)) / float(cost) * 100.0, 2)
         except (TypeError, ValueError):
             margin = None
         out.append(
@@ -287,8 +308,10 @@ async def create_movement(
 ) -> dict[str, str]:
     if payload.type not in {m.value for m in StockMovementType}:
         raise HTTPException(status_code=400, detail="Неверный тип движения склада")
-    if payload.type == "writeoff":
-        await require_role("owner", "warehouse")(current_user)
+    # Списание (writeoff) — только owner и warehouse, кассирам не давать.
+    # Проверяем inline т.к. правило зависит от поля payload, а не от эндпоинта.
+    if payload.type == "writeoff" and current_user.role.value not in ("owner", "warehouse"):
+        raise HTTPException(status_code=403, detail="Списание доступно только владельцу и складовщику")
 
     product = (
         await db.execute(select(Product).where(Product.id == payload.product_id, Product.is_deleted.is_(False)))
@@ -340,14 +363,94 @@ async def create_movement(
     return {"detail": "Движение сохранено"}
 
 
+# Системные префиксы reason — такие движения создаёт сама система (продажа/возврат/ревизия).
+# Их нельзя редактировать или удалять руками: иначе остаток рассинхронизируется
+# с реальными продажами/возвратами/ревизиями.
+SYSTEM_REASON_PREFIXES = ("Продажа", "Возврат продажи", "Ревизия")
+
+
+def _is_system_movement(m: StockMovement) -> bool:
+    reason = (m.reason or "").strip()
+    return any(reason.startswith(p) for p in SYSTEM_REASON_PREFIXES)
+
+
+@router.put("/movements/{movement_id}")
+async def update_movement(
+    movement_id: int,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("owner", "warehouse")),
+) -> dict[str, str]:
+    """Редактирование уже сохранённого движения (приход/расход/списание).
+    Принимает поля: quantity, quantity_decimal, cost_price, reason, supplier_id.
+    Только owner и warehouse. Системные движения (от продаж/возвратов/ревизий) защищены."""
+    movement = (
+        await db.execute(
+            select(StockMovement).where(
+                StockMovement.id == movement_id,
+                StockMovement.org_id == current_user.org_id,
+                StockMovement.is_deleted.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    if not movement:
+        raise HTTPException(status_code=404, detail="Движение не найдено")
+    if _is_system_movement(movement):
+        raise HTTPException(
+            status_code=403,
+            detail="Это системное движение (продажа/возврат/ревизия). Чтобы исправить — отмени соответствующую продажу или ревизию.",
+        )
+
+    for field in ("quantity", "quantity_decimal", "cost_price", "reason", "supplier_id", "writeoff_reason"):
+        if field in payload:
+            setattr(movement, field, payload[field])
+    # Если меняли cost_price у прихода — синхронизируем Product.purchase_price.
+    if "cost_price" in payload and movement.type == StockMovementType.in_stock and payload["cost_price"]:
+        product = (
+            await db.execute(select(Product).where(Product.id == movement.product_id))
+        ).scalar_one_or_none()
+        if product:
+            product.purchase_price = payload["cost_price"]
+    await db.commit()
+    return {"detail": "Движение обновлено"}
+
+
+@router.delete("/movements/{movement_id}")
+async def delete_movement(
+    movement_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role("owner", "warehouse")),
+) -> dict[str, str]:
+    """Soft-delete движения. После удаления оно перестаёт влиять на остаток
+    (запросы суммирования фильтруют is_deleted=False). Только owner и warehouse."""
+    movement = (
+        await db.execute(
+            select(StockMovement).where(
+                StockMovement.id == movement_id,
+                StockMovement.org_id == current_user.org_id,
+                StockMovement.is_deleted.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    if not movement:
+        raise HTTPException(status_code=404, detail="Движение не найдено")
+    if _is_system_movement(movement):
+        raise HTTPException(
+            status_code=403,
+            detail="Это системное движение (продажа/возврат/ревизия). Удалять напрямую нельзя — отмени соответствующую продажу или ревизию.",
+        )
+    movement.is_deleted = True
+    movement.deleted_at = datetime.now(timezone.utc)
+    await db.commit()
+    return {"detail": "Движение удалено"}
+
+
 @router.post("/revision")
 async def apply_revision(
     payload: RevisionApply,
     db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(require_role("owner", "warehouse", "seller")),
 ) -> dict[str, str]:
-    await require_role("owner", "warehouse", "seller")(current_user)
-
     from decimal import Decimal as _D
     for item in payload.items:
         if item.actual_qty < 0:

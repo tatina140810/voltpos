@@ -14,6 +14,10 @@ import { SalePage } from "./pages/Sale";
 import { StockPage } from "./pages/Stock";
 import { Suppliers as SuppliersPage } from "./pages/Suppliers";
 import { EmployeesPage } from "./pages/Employees";
+import { ScanInvoicePage } from "./pages/ScanInvoice";
+import { RevisionsPage } from "./pages/Revisions";
+import { RevisionActivePage } from "./pages/RevisionActive";
+import { RevisionReportPage } from "./pages/RevisionReport";
 import { SuperLoginPage } from "./pages/super/SuperLogin";
 import { SuperLayout } from "./pages/super/SuperLayout";
 import { SuperDashboard } from "./pages/super/SuperDashboard";
@@ -46,6 +50,10 @@ function App() {
             <Route path="/cash-withdrawals" element={<CashWithdrawalsPage />} />
             <Route path="/reports" element={<ReportsPage />} />
             <Route path="/employees" element={<EmployeesPage />} />
+            <Route path="/scan" element={<ScanInvoicePage />} />
+            <Route path="/revisions" element={<RevisionsPage />} />
+            <Route path="/revisions/active" element={<RevisionActivePage />} />
+            <Route path="/revisions/:id/report" element={<RevisionReportPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/sale" replace />} />
         </Routes>

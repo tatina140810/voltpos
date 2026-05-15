@@ -36,6 +36,9 @@ type Movement = {
   product_id: number;
   type: string;
   quantity: number;
+  quantity_decimal?: string | number | null;
+  cost_price?: string | number | null;
+  reason?: string | null;
   created_at?: string;
   created_by_name?: string;
 };
@@ -114,7 +117,12 @@ const MOVEMENT_TYPE_LABEL: Record<string, string> = {
   out: "Расход",
   writeoff: "Списание",
 };
-const modalCard = "mx-auto mt-8 max-w-2xl rounded-2xl bg-white p-5 shadow-xl max-h-[92vh] overflow-y-auto";
+// max-h учитывает мобильный таб-бар (≈72px) + safe-area-inset-bottom (notch/home indicator),
+// иначе кнопки внизу модалки закрываются нижним меню и не доскроллить.
+// pb-24 — внутренний хвостик контента, чтобы последняя кнопка не упиралась в край.
+const modalCard =
+  "mx-auto mt-8 max-w-2xl rounded-2xl bg-white p-5 pb-24 shadow-xl overflow-y-auto " +
+  "max-h-[calc(100dvh-96px-env(safe-area-inset-bottom))] md:max-h-[92vh] md:pb-5";
 
 /** Кнопки панели склада: без фикс. height — иначе двухстрочный текст обрезается */
 const stockToolbarBtn =
@@ -122,8 +130,16 @@ const stockToolbarBtn =
 
 export function StockPage() {
   const isOwner = useAuthStore((s) => s.role === "owner");
+  const role = useAuthStore((s) => s.role);
+  const canEditMovements = role === "owner" || role === "warehouse";
   const { type: businessType, hasExpiryDate } = useBusinessSettings();
   const isGrocery = businessType === "grocery";
+
+  // Состояние редактирования движения склада (приход/расход/списание).
+  const [editingMovement, setEditingMovement] = useState<Movement | null>(null);
+  const [editMovementQty, setEditMovementQty] = useState("");
+  const [editMovementCost, setEditMovementCost] = useState("");
+  const [editMovementReason, setEditMovementReason] = useState("");
 
   const suppliersQuery = useQuery({
     queryKey: ["suppliers"],
@@ -581,6 +597,49 @@ export function StockPage() {
       setOutModalError(details);
       setMessage(`Ошибка сохранения движения: ${details}`);
     },
+  });
+
+  // Редактирование уже сохранённого движения (приход/расход/списание).
+  // Кассир может ошибиться при ИИ-распознавании — даём возможность поправить количество и цену.
+  const updateMovementMutation = useMutation({
+    mutationFn: async () => {
+      if (!editingMovement) throw new Error("no movement");
+      const isWeighed = editingMovement.quantity_decimal != null;
+      const qtyNum = Number(String(editMovementQty).replace(",", ".")) || 0;
+      const payload: Record<string, unknown> = {
+        reason: editMovementReason || null,
+        cost_price: editMovementCost ? Number(String(editMovementCost).replace(",", ".")) : null,
+      };
+      if (isWeighed) {
+        payload.quantity = 0;
+        payload.quantity_decimal = qtyNum;
+      } else {
+        payload.quantity = Math.max(0, Math.floor(qtyNum));
+        payload.quantity_decimal = null;
+      }
+      await api.put(`/stock/movements/${editingMovement.id}`, payload);
+    },
+    onSuccess: async () => {
+      setEditingMovement(null);
+      await queryClient.invalidateQueries({ queryKey: ["stock-summary"] });
+      await queryClient.invalidateQueries({ queryKey: ["stock-movements"] });
+      await queryClient.invalidateQueries({ queryKey: ["stock"] });
+      setMessage("Движение обновлено");
+    },
+    onError: (err) => setMessage(`Не удалось обновить: ${extractAxiosDetail(err)}`),
+  });
+
+  const deleteMovementMutation = useMutation({
+    mutationFn: async (id: number) => {
+      await api.delete(`/stock/movements/${id}`);
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["stock-summary"] });
+      await queryClient.invalidateQueries({ queryKey: ["stock-movements"] });
+      await queryClient.invalidateQueries({ queryKey: ["stock"] });
+      setMessage("Движение удалено, остаток пересчитан");
+    },
+    onError: (err) => setMessage(`Не удалось удалить: ${extractAxiosDetail(err)}`),
   });
 
   const generateBarcodeMutation = useMutation({
@@ -1504,6 +1563,7 @@ export function StockPage() {
                 <th className="px-2 py-2">Тип</th>
                 <th className="px-2 py-2">Кол-во</th>
                 <th className="px-2 py-2">Кто сделал</th>
+                {canEditMovements ? <th className="px-2 py-2">Действия</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -1528,6 +1588,37 @@ export function StockPage() {
                     </td>
                     <td className="px-2 py-2">{m.quantity}</td>
                     <td className="px-2 py-2">{m.created_by_name || "-"}</td>
+                    {canEditMovements ? (
+                      <td className="px-2 py-2">
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setEditingMovement(m);
+                              setEditMovementQty(String(m.quantity ?? ""));
+                              setEditMovementCost(m.cost_price != null ? String(m.cost_price) : "");
+                              setEditMovementReason(m.reason ?? "");
+                            }}
+                            className="rounded border border-slate-200 px-2 py-1 text-xs hover:border-primary hover:text-primary"
+                            title="Изменить движение"
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              if (window.confirm(`Удалить ${MOVEMENT_TYPE_LABEL[m.type] ?? m.type} #${m.id} (${p?.name ?? ""}, ${m.quantity})?\nОстаток автоматически пересчитается.`)) {
+                                deleteMovementMutation.mutate(m.id);
+                              }
+                            }}
+                            className="rounded border border-slate-200 px-2 py-1 text-xs text-slate-500 hover:border-red-300 hover:bg-red-50 hover:text-red-600"
+                            title="Удалить движение (откатит остаток)"
+                          >
+                            🗑
+                          </button>
+                        </div>
+                      </td>
+                    ) : null}
                   </tr>
                 );
               })}
@@ -2531,6 +2622,73 @@ export function StockPage() {
               <button className="rounded-lg border px-3 py-2" onClick={() => { openOutModal(scanActionProduct.id); setScanActionProduct(null); }}>Расход</button>
               <button className="rounded-lg border px-3 py-2" onClick={() => { openProductCard(scanActionProduct); setScanActionProduct(null); }}>Карточка</button>
               <button className="rounded-lg border px-3 py-2" onClick={() => setScanActionProduct(null)}>Закрыть</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* === Модалка редактирования сохранённого движения === */}
+      {editingMovement ? (
+        <div className={modalOverlay} onClick={() => setEditingMovement(null)}>
+          <div className={`${modalCard} max-w-md`} onClick={(e) => e.stopPropagation()}>
+            <div className="mb-3 flex items-start justify-between">
+              <h3 className="text-lg font-semibold">
+                Редактировать {MOVEMENT_TYPE_LABEL[editingMovement.type] ?? editingMovement.type} #{editingMovement.id}
+              </h3>
+              <button onClick={() => setEditingMovement(null)} className="text-2xl text-slate-400" aria-label="Закрыть">×</button>
+            </div>
+            <p className="mb-3 text-sm text-slate-500">
+              Товар: <b>{products.find((p) => p.id === editingMovement.product_id)?.name ?? "?"}</b>
+              <br />
+              После сохранения остаток на складе пересчитается автоматически.
+            </p>
+            <label className="mb-2 block">
+              <span className="mb-1 block text-xs text-slate-500">Количество</span>
+              <input
+                type="text"
+                inputMode="decimal"
+                value={editMovementQty}
+                onChange={(e) => setEditMovementQty(e.target.value)}
+                className="h-10 w-full rounded-lg border border-slate-300 px-3 text-right tabular-nums"
+              />
+            </label>
+            {editingMovement.type === "in" ? (
+              <label className="mb-2 block">
+                <span className="mb-1 block text-xs text-slate-500">Цена закупки за единицу (сом)</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={editMovementCost}
+                  onChange={(e) => setEditMovementCost(e.target.value)}
+                  className="h-10 w-full rounded-lg border border-slate-300 px-3 text-right tabular-nums"
+                />
+              </label>
+            ) : null}
+            <label className="mb-3 block">
+              <span className="mb-1 block text-xs text-slate-500">Комментарий</span>
+              <input
+                type="text"
+                value={editMovementReason}
+                onChange={(e) => setEditMovementReason(e.target.value)}
+                className="h-10 w-full rounded-lg border border-slate-300 px-3 text-sm"
+              />
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => updateMovementMutation.mutate()}
+                disabled={updateMovementMutation.isPending}
+                className="flex-1 rounded-lg bg-primary px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {updateMovementMutation.isPending ? "Сохраняю…" : "Сохранить"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setEditingMovement(null)}
+                className="rounded-lg border border-slate-300 px-4 py-2 text-sm"
+              >
+                Отмена
+              </button>
             </div>
           </div>
         </div>

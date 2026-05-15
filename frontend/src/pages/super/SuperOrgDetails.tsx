@@ -42,6 +42,9 @@ type OrgDetails = {
   business_type: string | null;
   business_modules: Record<string, boolean>;
   business_units: string[];
+  has_invoice_scan: boolean;
+  invoice_scan_quota: number;
+  invoice_scan_used: number;
   status: "active" | "blocked" | "no_payment_set";
   days_left: number | null;
   created_at: string;
@@ -225,6 +228,8 @@ function OrgInfoCard({ org, onUpdated }: { org: OrgDetails; onUpdated: () => voi
   const [wPrefix, setWPrefix] = useState(org.weighed.prefix || "");
   const [wCodeLen, setWCodeLen] = useState(org.weighed.code_length?.toString() || "");
   const [wGramsLen, setWGramsLen] = useState(org.weighed.grams_length?.toString() || "");
+  const [invoiceScanOn, setInvoiceScanOn] = useState(Boolean(org.has_invoice_scan));
+  const [invoiceScanQuota, setInvoiceScanQuota] = useState(String(org.invoice_scan_quota ?? 200));
   const [error, setError] = useState("");
 
   const save = useMutation({
@@ -239,6 +244,8 @@ function OrgInfoCard({ org, onUpdated }: { org: OrgDetails; onUpdated: () => voi
         weighed_barcode_prefix: weighedOn ? wPrefix || null : null,
         weighed_code_length: weighedOn && wCodeLen ? Number(wCodeLen) : null,
         weighed_grams_length: weighedOn && wGramsLen ? Number(wGramsLen) : null,
+        has_invoice_scan: invoiceScanOn,
+        invoice_scan_quota: Number(invoiceScanQuota) || 200,
       });
     },
     onSuccess: () => {
@@ -429,6 +436,45 @@ function OrgInfoCard({ org, onUpdated }: { org: OrgDetails; onUpdated: () => voi
                   Сейчас: {wPrefix.length} + {wCodeLen || "?"} + {wGramsLen || "?"} + 1 ={" "}
                   {wPrefix.length + (Number(wCodeLen) || 0) + (Number(wGramsLen) || 0) + 1}
                 </p>
+              </div>
+            ) : null}
+          </div>
+          <div className="md:col-span-2 rounded-lg border bg-indigo-50/40 p-3">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={invoiceScanOn}
+                onChange={(e) => setInvoiceScanOn(e.target.checked)}
+              />
+              <span className="text-sm font-medium">
+                📷 Сканирование накладных через ИИ (платная фича)
+              </span>
+            </label>
+            <p className="mt-1 text-xs text-slate-600">
+              Кассир фотографирует приходную накладную → ИИ распознаёт товары и количество.
+              Базовый пакет — 200 сканов/месяц.
+            </p>
+            {invoiceScanOn ? (
+              <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                <label className="block">
+                  <span className="mb-1 block text-xs text-slate-600">Месячный лимит сканов</span>
+                  <input
+                    type="number"
+                    min={0}
+                    value={invoiceScanQuota}
+                    onChange={(e) => setInvoiceScanQuota(e.target.value)}
+                    className="w-full rounded border p-2"
+                  />
+                </label>
+                <div>
+                  <span className="mb-1 block text-xs text-slate-600">Использовано в этом месяце</span>
+                  <p className="rounded border bg-white p-2 text-sm">
+                    <b>{org.invoice_scan_used ?? 0}</b> из {org.invoice_scan_quota ?? 200}
+                    {(org.invoice_scan_used ?? 0) >= (org.invoice_scan_quota ?? 200) ? (
+                      <span className="ml-2 text-rose-600">⚠ лимит исчерпан</span>
+                    ) : null}
+                  </p>
+                </div>
               </div>
             ) : null}
           </div>

@@ -62,7 +62,13 @@ async def _stock_balance(db: AsyncSession, product_id: int):
     return Decimal(str(in_q or 0)) - Decimal(str(out_q or 0))
 
 
-async def _create_sale(payload: SaleCreate, db: AsyncSession, current_user: User) -> Sale:
+async def _create_sale(
+    payload: SaleCreate,
+    db: AsyncSession,
+    current_user: User,
+    *,
+    allow_no_shift: bool = False,
+) -> Sale:
     if payload.offline_id:
         # Идемпотентность: продажа с таким offline_id может быть только в этой же организации.
         # Без org_id фильтра был теоретический риск UUID-коллизии вернуть чужую продажу.
@@ -94,8 +100,10 @@ async def _create_sale(payload: SaleCreate, db: AsyncSession, current_user: User
 
     # Привязка к смене обязательна для онлайн-продаж — иначе кассовая дисциплина
     # рушится: деньги физически идут мимо учёта, Z-отчёт не сходится.
-    # Исключение: offline_id — это продажа сделанная без интернета и сейчас
-    # синкается. Блокировать её нельзя (данные уже есть на устройстве).
+    # Исключение allow_no_shift=True — только для офлайн-синка (/sales/sync):
+    # эти продажи физически уже сделаны на устройстве кассира, блокировать их
+    # = терять реальные деньги. Все обычные POST /sales (даже с offline_id для
+    # дедупликации) обязаны иметь открытую смену.
     from app.models.shift import Shift
     open_shift = (
         await db.execute(
@@ -106,7 +114,7 @@ async def _create_sale(payload: SaleCreate, db: AsyncSession, current_user: User
             )
         )
     ).scalar_one_or_none()
-    if open_shift is None and not payload.offline_id:
+    if open_shift is None and not allow_no_shift:
         raise HTTPException(
             status_code=400,
             detail="Сначала откройте смену (виджет «Смена» сверху на кассе). Без открытой смены продажа не оформляется.",
@@ -733,5 +741,7 @@ async def sync_sales(
 ) -> list[Sale]:
     synced: list[Sale] = []
     for sale_input in payload:
-        synced.append(await _create_sale(sale_input, db, user))
+        # allow_no_shift=True: продажи уже физически сделаны офлайн, могут
+        # синкаться когда смена давно закрыта или ещё не открыта.
+        synced.append(await _create_sale(sale_input, db, user, allow_no_shift=True))
     return synced

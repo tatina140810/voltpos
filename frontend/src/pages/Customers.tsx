@@ -271,6 +271,31 @@ function CustomerDetailsModal({ id, onClose }: { id: number; onClose: () => void
     onError: () => alert("Не удалось сохранить дату"),
   });
 
+  // Погашение долга по КОНКРЕТНОЙ продаже (без FIFO).
+  const [paySaleId, setPaySaleId] = useState<number | null>(null);
+  const [paySaleAmount, setPaySaleAmount] = useState("");
+  const [paySaleMethod, setPaySaleMethod] = useState<"cash" | "card" | "transfer">("cash");
+  const paySaleMutation = useMutation({
+    mutationFn: async () => {
+      if (!paySaleId) throw new Error("no sale");
+      await api.post(`/sales/${paySaleId}/pay-debt`, {
+        amount: Number(String(paySaleAmount).replace(",", ".")) || 0,
+        method: paySaleMethod,
+      });
+    },
+    onSuccess: async () => {
+      setPaySaleId(null);
+      setPaySaleAmount("");
+      await queryClient.invalidateQueries({ queryKey: ["customer-details", id] });
+      await queryClient.invalidateQueries({ queryKey: ["customer-payments", id] });
+      await queryClient.invalidateQueries({ queryKey: ["customers"] });
+    },
+    onError: (err: unknown) => {
+      const detail = (err as { response?: { data?: { detail?: string } } }).response?.data?.detail;
+      alert(detail ?? "Не удалось погасить");
+    },
+  });
+
   const deleteMutation = useMutation({
     mutationFn: async () => api.delete(`/customers/${id}`),
     onSuccess: async () => {
@@ -388,13 +413,27 @@ function CustomerDetailsModal({ id, onClose }: { id: number; onClose: () => void
                     const isOverdue = !!sd.promised_payment_date && sd.promised_payment_date < today;
                     return (
                       <div key={sd.id} className="rounded-xl border p-2 text-sm">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2">
                           <span className="font-semibold">
                             #{sd.id} · {sd.remaining_debt.toFixed(2)} сом
                           </span>
-                          <span className="text-xs text-slate-500">
-                            {sd.date ? new Date(sd.date).toLocaleDateString("ru-RU") : "—"}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-slate-500">
+                              {sd.date ? new Date(sd.date).toLocaleDateString("ru-RU") : "—"}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setPaySaleId(sd.id);
+                                setPaySaleAmount(String(sd.remaining_debt));
+                                setPaySaleMethod("cash");
+                              }}
+                              className="rounded-lg bg-emerald-600 px-2 py-1 text-xs font-semibold text-white hover:bg-emerald-700"
+                              title="Погасить именно эту накладную"
+                            >
+                              💰 Погасить эту
+                            </button>
+                          </div>
                         </div>
                         <div className="mt-2 flex items-center gap-2">
                           <label className="text-xs text-slate-500">Обещал вернуть до:</label>
@@ -509,6 +548,55 @@ function CustomerDetailsModal({ id, onClose }: { id: number; onClose: () => void
           </div>
         ) : null}
       </div>
+
+      {/* Модалка погашения по конкретной продаже */}
+      {paySaleId !== null ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => setPaySaleId(null)}
+        >
+          <div
+            className="w-full max-w-sm rounded-2xl bg-white p-4 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="mb-3 text-base font-semibold">Погасить долг по продаже #{paySaleId}</h3>
+            <label className="mb-2 block text-xs text-slate-500">Сумма</label>
+            <NumberInput
+              value={paySaleAmount}
+              onChange={setPaySaleAmount}
+              placeholder="Сумма"
+              className="mb-3 h-11 w-full rounded-xl border px-3"
+            />
+            <label className="mb-2 block text-xs text-slate-500">Способ оплаты</label>
+            <select
+              value={paySaleMethod}
+              onChange={(e) => setPaySaleMethod(e.target.value as "cash" | "card" | "transfer")}
+              className="mb-4 h-11 w-full rounded-xl border bg-white px-3"
+            >
+              <option value="cash">💵 Наличными</option>
+              <option value="card">💳 Картой</option>
+              <option value="transfer">📱 Переводом</option>
+            </select>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => paySaleMutation.mutate()}
+                disabled={!paySaleAmount || Number(String(paySaleAmount).replace(",", ".")) <= 0 || paySaleMutation.isPending}
+                className="flex-1 rounded-xl bg-emerald-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+              >
+                {paySaleMutation.isPending ? "Сохраняю…" : "Погасить"}
+              </button>
+              <button
+                type="button"
+                onClick={() => setPaySaleId(null)}
+                className="rounded-xl border border-slate-300 px-4 py-2 text-sm"
+              >
+                Отмена
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

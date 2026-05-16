@@ -56,7 +56,19 @@ type InstallationRow = {
 
 type SummaryReport = {
   period: { from: string | null; to: string | null };
-  revenue: { cash: string; card: string; transfer: string; total: string };
+  revenue: {
+    cash: string; card: string; transfer: string; total: string;
+    sales_only?: { cash: string; card: string; transfer: string; total: string };
+    debt_payments?: { cash: string; card: string; transfer: string; total: string };
+  };
+  profit?: {
+    revenue: string; cost: string; salary: string; other_expenses: string;
+    revision_surplus?: string; revision_shortage?: string; revision_net?: string;
+    total: string;
+  };
+  revisions_period?: {
+    surplus_value: string; shortage_value: string; net_value: string; movements_count: number;
+  };
   sales: {
     count: number;
     total_amount: string;
@@ -564,6 +576,42 @@ export function ReportsPage() {
             </section>
           ) : null}
 
+          {/* === Ревизии за период (излишки/недостачи) === */}
+          {data.revisions_period && data.revisions_period.movements_count > 0 ? (
+            <section className="mt-4 rounded-2xl bg-white p-4 shadow">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-lg font-semibold">
+                  📋 Ревизии за период ({data.revisions_period.movements_count} движений)
+                </h2>
+                <span
+                  className={`text-sm font-semibold ${
+                    Number(data.revisions_period.net_value) >= 0 ? "text-emerald-700" : "text-red-700"
+                  }`}
+                >
+                  {Number(data.revisions_period.net_value) >= 0 ? "+" : ""}
+                  {num(data.revisions_period.net_value)} сом
+                </span>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border bg-emerald-50 p-3 text-sm">
+                  <p className="text-xs text-emerald-700">Излишек (по закупке)</p>
+                  <p className="mt-1 text-xl font-bold text-emerald-800">
+                    +{num(data.revisions_period.surplus_value)} сом
+                  </p>
+                </div>
+                <div className="rounded-xl border bg-red-50 p-3 text-sm">
+                  <p className="text-xs text-red-700">Недостача (по закупке)</p>
+                  <p className="mt-1 text-xl font-bold text-red-800">
+                    −{num(data.revisions_period.shortage_value)} сом
+                  </p>
+                </div>
+              </div>
+              <p className="mt-2 text-xs text-slate-500">
+                Излишек и недостача уже учтены в прибыли (см. блок «Итог»). Каждое движение — это пересчёт остатка на складе.
+              </p>
+            </section>
+          ) : null}
+
           {/* === Потери (списания) === */}
           {writeoffsQuery.data && writeoffsQuery.data.summary.count > 0 ? (
             <section className="mt-4 rounded-2xl bg-white p-4 shadow">
@@ -809,8 +857,9 @@ function AccountingSummary({
   const transferLeft = transferIn;
 
   // Прибыль без инкассации (это просто перемещение денег, не расход бизнеса)
-  // и без скидки (она уже в продаже).
-  const profit = sale - cost - salary - other;
+  // и без скидки (она уже в продаже). Плюс излишек/недостача ревизии (rev_net).
+  const revNet = Number(data.revisions_period?.net_value ?? 0);
+  const profit = sale - cost - salary - other + revNet;
 
   return (
     <section className="mt-4 overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
@@ -836,6 +885,17 @@ function AccountingSummary({
           {inkas > 0 ? (
             <tr className="border-b text-xs text-slate-500">
               <td className="px-4 pb-2 pl-8">из них получено: {num(cashIn)} сом, инкассация: −{num(inkas)} сом</td>
+              <td></td>
+            </tr>
+          ) : null}
+          {data.revenue.debt_payments && Number(data.revenue.debt_payments.total) > 0 ? (
+            <tr className="border-b text-xs text-slate-500">
+              <td className="px-4 pb-2 pl-8">
+                из выручки <b>{num(data.revenue.sales_only?.total ?? 0)} сом</b> — продажи,{" "}
+                <b>{num(data.revenue.debt_payments.total)} сом</b> — погашение долгов
+                (нал {num(data.revenue.debt_payments.cash)}, карта {num(data.revenue.debt_payments.card)},
+                перевод {num(data.revenue.debt_payments.transfer)})
+              </td>
               <td></td>
             </tr>
           ) : null}
@@ -968,6 +1028,17 @@ function AccountingSummary({
               </td>
             </tr>
           )}
+          {revNet !== 0 ? (
+            <tr className="border-b">
+              <td className="px-4 py-3">
+                Излишек / недостача ревизии
+                <span className="ml-1 text-xs text-slate-500">(по закупочной цене)</span>
+              </td>
+              <td className={`px-4 py-3 text-right tabular-nums ${revNet >= 0 ? "text-emerald-700" : "text-red-700"}`}>
+                {revNet >= 0 ? "+" : ""}{num(revNet)} сом
+              </td>
+            </tr>
+          ) : null}
           <tr className="bg-emerald-50">
             <td className="px-4 py-4 text-base font-semibold">ПРИБЫЛЬ</td>
             <td className={`px-4 py-4 text-right tabular-nums text-2xl font-bold ${profit >= 0 ? "text-emerald-700" : "text-red-700"}`}>

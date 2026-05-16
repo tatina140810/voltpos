@@ -93,6 +93,9 @@ async def _create_sale(payload: SaleCreate, db: AsyncSession, current_user: User
             raise HTTPException(status_code=400, detail=f"Недостаточно остатка по товару {item.product_id}")
 
     # Если у кассира открыта смена — привязываем продажу к ней (для X/Z-отчётов).
+    # Если нет — автоматически создаём с opening_cash=0, чтобы продажи не висели
+    # «вне смены» и было что считать в Z-отчёте. Кассир позже может вручную
+    # перезакрыть/перепроверить.
     from app.models.shift import Shift
     open_shift = (
         await db.execute(
@@ -103,6 +106,17 @@ async def _create_sale(payload: SaleCreate, db: AsyncSession, current_user: User
             )
         )
     ).scalar_one_or_none()
+    if open_shift is None:
+        open_shift = Shift(
+            org_id=current_user.org_id,
+            cashier_id=current_user.id,
+            opened_at=datetime.now(timezone.utc),
+            opening_cash=Decimal("0"),
+            status="open",
+            notes="auto-opened (продажа без открытой смены)",
+        )
+        db.add(open_shift)
+        await db.flush()
 
     sale = Sale(
         org_id=current_user.org_id,
@@ -437,6 +451,66 @@ async def return_sale_items(
         sale.paid_card = Decimal("0")
         sale.paid_transfer = Decimal("0")
 
+    # Журнал возврата денег: создаём запись только если действительно вернули хоть копейку.
+    # shift_id берём от продажи — возврат «привязан» к смене, где сейчас работает кассир.
+    if cash_back > 0 or card_back > 0 or transfer_back > 0:
+        from app.models.shift import Shift
+        from app.models.refund import Refund
+        # Текущая открытая смена пользователя (если есть) — туда привязываем
+        # для Z-отчёта «возврат нал в эту смену».
+        open_shift = (
+            await db.execute(
+                select(Shift).where(
+                    Shift.org_id == user.org_id,
+                    Shift.cashier_id == user.id,
+                    Shift.status == "open",
+                )
+            )
+        ).scalar_one_or_none()
+        db.add(Refund(
+            org_id=user.org_id,
+            sale_id=sale.id,
+            shift_id=open_shift.id if open_shift else None,
+            cash=cash_back,
+            card=card_back,
+            transfer=transfer_back,
+            reason=reason,
+            created_by=user.id,
+            created_at=datetime.now(timezone.utc),
+        ))
+
+        # Откат DebtPayment: если возвращаемые деньги пересекаются с ранее погашенным
+        # долгом по этой продаже — создаём «обратные» DebtPayment с отрицательной суммой.
+        # В /reports/summary revenue корректно уменьшится в день возврата.
+        from app.models.debt_payment import DebtPayment
+        existing_dps = list(
+            (
+                await db.execute(
+                    select(DebtPayment).where(DebtPayment.sale_id == sale.id)
+                )
+            ).scalars().all()
+        )
+        # Считаем сколько уже погашено по каждому методу (только положительные).
+        paid_dp_by_method = {"cash": Decimal("0"), "card": Decimal("0"), "transfer": Decimal("0")}
+        for dp in existing_dps:
+            if dp.amount and dp.amount > 0 and dp.method in paid_dp_by_method:
+                paid_dp_by_method[dp.method] += dp.amount
+        # Сумма «обратки» по методу = min(возврат_по_методу, уже_погашено_по_методу).
+        # Это не вернёт больше, чем клиент в реальности заплатил через DebtPayment.
+        if sale.customer_id is not None:
+            for method, back in (("cash", cash_back), ("card", card_back), ("transfer", transfer_back)):
+                refund_dp = min(back, paid_dp_by_method[method])
+                if refund_dp > 0:
+                    db.add(DebtPayment(
+                        org_id=user.org_id,
+                        customer_id=sale.customer_id,
+                        sale_id=sale.id,
+                        amount=-refund_dp,  # отрицательная — «возврат денег»
+                        method=method,
+                        comment=f"Откат при возврате товара (продажа #{sale.id})",
+                        created_by_id=user.id,
+                    ))
+
     await db.commit()
 
     # Для push: имя первого товара возврата.
@@ -579,6 +653,73 @@ async def set_promised_payment_date(
         "id": sale.id,
         "promised_payment_date": sale.promised_payment_date.isoformat() if sale.promised_payment_date else None,
     }
+
+
+@router.post("/{sale_id}/pay-debt")
+async def pay_debt_for_sale(
+    sale_id: int,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> dict:
+    """Погасить долг по конкретной продаже. Тело: {amount, method, comment}.
+    В отличие от /customers/{id}/pay-debt — здесь нет FIFO: применяется только к этой sale."""
+    from app.models.debt_payment import DebtPayment
+    sale = (
+        await db.execute(
+            select(Sale).where(
+                Sale.id == sale_id,
+                Sale.org_id == user.org_id,
+                Sale.is_deleted.is_(False),
+            )
+        )
+    ).scalar_one_or_none()
+    if not sale:
+        raise HTTPException(status_code=404, detail="Продажа не найдена")
+    if sale.status != SaleStatus.debt:
+        raise HTTPException(status_code=400, detail="По этой продаже нет долга")
+    if not sale.customer_id:
+        raise HTTPException(status_code=400, detail="Продажа без клиента, погашение невозможно")
+
+    method = (payload.get("method") or "").strip()
+    if method not in ("cash", "card", "transfer"):
+        raise HTTPException(status_code=400, detail="method должен быть cash/card/transfer")
+    try:
+        amount = Decimal(str(payload.get("amount") or 0))
+    except Exception:
+        raise HTTPException(status_code=400, detail="amount должен быть числом")
+    if amount <= 0:
+        raise HTTPException(status_code=400, detail="amount должен быть больше нуля")
+
+    paid_total = (sale.paid_cash or Decimal("0")) + (sale.paid_card or Decimal("0")) + (sale.paid_transfer or Decimal("0"))
+    sale_debt = (sale.total or Decimal("0")) - paid_total
+    if sale_debt <= 0:
+        sale.status = SaleStatus.completed
+        await db.commit()
+        return {"applied": "0", "change": str(amount), "detail": "Долг уже погашен"}
+
+    portion = min(amount, sale_debt)
+    if method == "cash":
+        sale.paid_cash = (sale.paid_cash or Decimal("0")) + portion
+    elif method == "card":
+        sale.paid_card = (sale.paid_card or Decimal("0")) + portion
+    else:
+        sale.paid_transfer = (sale.paid_transfer or Decimal("0")) + portion
+    if portion >= sale_debt:
+        sale.status = SaleStatus.completed
+
+    db.add(DebtPayment(
+        org_id=user.org_id,
+        customer_id=sale.customer_id,
+        sale_id=sale.id,
+        amount=portion,
+        method=method,
+        comment=(payload.get("comment") or None),
+        created_by_id=user.id,
+    ))
+    await db.commit()
+    change = amount - portion
+    return {"applied": str(portion), "change": str(change), "sale_id": sale.id, "status": sale.status.value}
 
 
 @router.delete("/{sale_id}")

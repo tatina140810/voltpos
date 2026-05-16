@@ -134,15 +134,45 @@ async def _compute_shift_totals(db: AsyncSession, shift: Shift) -> dict:
         )
     ).scalar_one() or _zero()
 
+    # Возвраты клиентам в эту смену (журнал Refund). Отдельная строка в Z-отчёте,
+    # чтобы кассир видел оборот, а не только нетто-выручку.
+    from app.models.refund import Refund
+    refunds_rows = (
+        await db.execute(
+            select(
+                func.coalesce(func.sum(Refund.cash), 0),
+                func.coalesce(func.sum(Refund.card), 0),
+                func.coalesce(func.sum(Refund.transfer), 0),
+            ).where(Refund.shift_id == shift.id)
+        )
+    ).one()
+    cash_refunded = Decimal(refunds_rows[0] or 0)
+    card_refunded = Decimal(refunds_rows[1] or 0)
+    transfer_refunded = Decimal(refunds_rows[2] or 0)
+
+    # В cash_in исходного цикла уже учтены paid_cash ПОСЛЕ уменьшения возвратом
+    # (см. return_sale_items). Значит cash_in уже «с учётом» — но кассир хочет
+    # видеть и оборот: сколько пришло (gross) минус сколько вернули.
+    # Для прозрачности возвращаем gross = cash_in + cash_refunded.
+    cash_in_gross = cash_in + cash_refunded
+    card_in_gross = card_in + card_refunded
+    transfer_in_gross = transfer_in + transfer_refunded
+
     expected_cash = (shift.opening_cash or _zero()) + cash_in - Decimal(inkas)
 
     return {
         "sales_count": sales_count,
         "returned_count": returned_count,
         "sales_total": str(sales_total),
-        "cash_in": str(cash_in),
+        "cash_in": str(cash_in),  # нетто, после возвратов
         "card_in": str(card_in),
         "transfer_in": str(transfer_in),
+        "cash_in_gross": str(cash_in_gross),  # сколько пришло до возвратов
+        "card_in_gross": str(card_in_gross),
+        "transfer_in_gross": str(transfer_in_gross),
+        "cash_refunded": str(cash_refunded),
+        "card_refunded": str(card_refunded),
+        "transfer_refunded": str(transfer_refunded),
         "inkas": str(Decimal(inkas)),
         "opening_cash": str(shift.opening_cash or _zero()),
         "expected_cash": str(expected_cash),

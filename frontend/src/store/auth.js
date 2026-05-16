@@ -12,12 +12,23 @@ function parseRole(token) {
     }
     return "seller";
 }
+// Последний успешно использованный org_code запоминаем в localStorage,
+// чтобы кассир не вводил «свой» магазин при каждом логине.
+// Дефолт пустой (а не TSF001) — тестовый код не должен прыгать к реальным магазинам.
+const STORED_ORG_CODE_KEY = "voltpos_last_org_code";
 export const useAuthStore = create((set) => ({
     token: localStorage.getItem("voltpos_token"),
     role: parseRole(localStorage.getItem("voltpos_token")),
-    orgCode: "TSF001",
+    orgCode: localStorage.getItem(STORED_ORG_CODE_KEY) ?? "",
     pinCode: "",
-    setOrgCode: (value) => set({ orgCode: value.toUpperCase() }),
+    setOrgCode: (value) => {
+        const next = value.toUpperCase();
+        try {
+            localStorage.setItem(STORED_ORG_CODE_KEY, next);
+        }
+        catch { /* приватный режим */ }
+        set({ orgCode: next });
+    },
     appendPin: (digit) => set((state) => ({
         pinCode: state.pinCode.length < 6 ? `${state.pinCode}${digit}` : state.pinCode,
     })),

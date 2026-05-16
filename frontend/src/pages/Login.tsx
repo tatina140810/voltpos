@@ -58,7 +58,7 @@ export function LoginPage() {
               className="w-full rounded-xl border p-3 text-lg uppercase"
               value={orgCode}
               onChange={(e) => setOrgCode(e.target.value)}
-              placeholder="TSF001"
+              placeholder="Код магазина (6 символов)"
             />
           </div>
 

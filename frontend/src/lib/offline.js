@@ -1,8 +1,11 @@
+import axios from "axios";
 import { api } from "./api";
 const DB_NAME = "voltpos-offline-db";
-const DB_VERSION = 1;
+// v2: добавлен FAILED_STORE для «карантина» продаж с 4xx-ошибкой синка.
+const DB_VERSION = 2;
 const PRODUCTS_STORE = "products";
 const QUEUE_STORE = "offlineQueue";
+const FAILED_STORE = "failedQueue";
 function openDb() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -13,6 +16,10 @@ function openDb() {
             }
             if (!db.objectStoreNames.contains(QUEUE_STORE)) {
                 db.createObjectStore(QUEUE_STORE, { keyPath: "offline_id" });
+            }
+            // v2: карантин для продаж, которые сервер отверг 4xx-ошибкой.
+            if (!db.objectStoreNames.contains(FAILED_STORE)) {
+                db.createObjectStore(FAILED_STORE, { keyPath: "offline_id" });
             }
         };
         request.onsuccess = () => resolve(request.result);
@@ -75,15 +82,76 @@ async function deleteQueuedSale(offlineId) {
         tx.onerror = () => reject(tx.error);
     });
 }
+async function moveToFailed(item, httpStatus, errorMessage) {
+    const db = await openDb();
+    await new Promise((resolve, reject) => {
+        const tx = db.transaction([QUEUE_STORE, FAILED_STORE], "readwrite");
+        tx.objectStore(FAILED_STORE).put({
+            ...item,
+            failed_at: new Date().toISOString(),
+            http_status: httpStatus,
+            error_message: errorMessage,
+        });
+        tx.objectStore(QUEUE_STORE).delete(item.offline_id);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+export async function getFailedSales() {
+    const db = await openDb();
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(FAILED_STORE, "readonly");
+        const request = tx.objectStore(FAILED_STORE).getAll();
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+    });
+}
+export async function deleteFailedSale(offlineId) {
+    const db = await openDb();
+    await new Promise((resolve, reject) => {
+        const tx = db.transaction(FAILED_STORE, "readwrite");
+        tx.objectStore(FAILED_STORE).delete(offlineId);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+    });
+}
+export async function getQueueStats() {
+    const [pending, failed] = await Promise.all([getQueuedSales(), getFailedSales()]);
+    return { pending: pending.length, failed: failed.length };
+}
 export async function syncOfflineSales() {
     if (!navigator.onLine)
         return 0;
     const queued = await getQueuedSales();
     if (!queued.length)
         return 0;
-    await api.post("/sales/sync", queued.map((item) => item.payload));
+    // Шлём по одной, чтобы один «битый» чек не блокировал всю очередь.
+    // 4xx (валидация / недостаток остатка / etc) → карантин, кассир увидит и решит.
+    // 5xx / сетевые / таймаут → оставляем в очереди, попробуем снова при следующем syncOfflineSales.
+    let synced = 0;
     for (const item of queued) {
-        await deleteQueuedSale(item.offline_id);
+        try {
+            await api.post("/sales/sync", [item.payload]);
+            await deleteQueuedSale(item.offline_id);
+            synced += 1;
+        }
+        catch (err) {
+            const status = axios.isAxiosError(err) ? err.response?.status ?? 0 : 0;
+            const detail = axios.isAxiosError(err)
+                ? typeof err.response?.data?.detail === "string"
+                    ? err.response.data.detail
+                    : err.message
+                : String(err);
+            // 4xx — постоянная ошибка, не имеет смысла ретраить. В карантин.
+            if (status >= 400 && status < 500) {
+                await moveToFailed(item, status, detail);
+            }
+            // 5xx / 0 (сетевая) — выходим из цикла, попробуем позже.
+            // Но если 4xx — продолжаем со следующей.
+            if (status >= 500 || status === 0) {
+                break;
+            }
+        }
     }
-    return queued.length;
+    return synced;
 }

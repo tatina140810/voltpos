@@ -4,6 +4,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import axios from "axios";
 import { BarcodeScanner } from "../components/BarcodeScanner";
 import { NumberInput } from "../components/NumberInput";
+import { OfflineQueueBadge } from "../components/OfflineQueueBadge";
 import { ShiftWidget } from "../components/ShiftWidget";
 import { useBusinessSettings } from "../hooks/useBusinessSettings";
 import { api } from "../lib/api";
@@ -309,7 +310,8 @@ export function SalePage() {
             }
             if (!navigator.onLine) {
                 await queueOfflineSale(payload);
-                return null;
+                // Возвращаем флаг offline=true чтобы onSuccess показал понятное сообщение.
+                return { id: null, offline: true };
             }
             const response = await api.post("/sales", payload);
             return response.data;
@@ -319,10 +321,11 @@ export function SalePage() {
                 total,
                 customerName: customer?.name ?? null,
                 saleId: data?.id ?? null,
+                offline: Boolean(data?.offline),
             });
             setTimeout(() => {
                 setSuccessOverlay(null);
-            }, 3000);
+            }, data?.offline ? 4500 : 3000);
             resetSale();
             setShowCheckoutMobile(false);
             setMessage("");
@@ -408,7 +411,7 @@ export function SalePage() {
         setDebtDate("");
         setManualDiscountInput("");
     };
-    return (_jsxs("main", { className: `mx-auto min-h-screen max-w-7xl bg-slate-50 px-3 py-3 ${hasFastCheckout && hasWeightScale ? "fast-checkout" : ""}`, children: [_jsx("h1", { className: "mb-3 text-3xl font-semibold", children: "\u041A\u0430\u0441\u0441\u0430" }), _jsx(ShiftWidget, {}), _jsxs("div", { className: "grid gap-4 md:grid-cols-5", children: [_jsxs("section", { className: "rounded-2xl bg-white p-3 shadow md:col-span-3", children: [hasFastCheckout && hasWeightScale ? (_jsxs("div", { className: "mb-3 flex flex-wrap gap-2", children: [_jsx("input", { inputMode: "numeric", pattern: "\\d+", className: "h-12 w-32 rounded-xl border px-3 text-base font-mono", placeholder: "PLU", value: pluCode, onChange: (e) => setPluCode(e.target.value), onKeyDown: (e) => {
+    return (_jsxs("main", { className: `mx-auto min-h-screen max-w-7xl bg-slate-50 px-3 py-3 ${hasFastCheckout && hasWeightScale ? "fast-checkout" : ""}`, children: [_jsx("h1", { className: "mb-3 text-3xl font-semibold", children: "\u041A\u0430\u0441\u0441\u0430" }), _jsx(ShiftWidget, {}), _jsx(OfflineQueueBadge, {}), _jsxs("div", { className: "grid gap-4 md:grid-cols-5", children: [_jsxs("section", { className: "rounded-2xl bg-white p-3 shadow md:col-span-3", children: [hasFastCheckout && hasWeightScale ? (_jsxs("div", { className: "mb-3 flex flex-wrap gap-2", children: [_jsx("input", { inputMode: "numeric", pattern: "\\d+", className: "h-12 w-32 rounded-xl border px-3 text-base font-mono", placeholder: "PLU", value: pluCode, onChange: (e) => setPluCode(e.target.value), onKeyDown: (e) => {
                                             if (e.key === "Enter") {
                                                 e.preventDefault();
                                                 pluWeightRef.current?.focus();
@@ -472,7 +475,7 @@ export function SalePage() {
                             autoClose: ok,
                         };
                     })();
-                }, onClose: () => setShowScanner(false) }, scannerSession)) : null, successOverlay ? (_jsx("div", { className: "fixed inset-0 z-50 flex items-center justify-center bg-emerald-600/95 p-4 text-white", children: _jsxs("div", { className: "w-full max-w-lg rounded-2xl bg-emerald-700 p-6 text-center", children: [_jsx("div", { className: "text-6xl", children: "\u2713" }), _jsx("h2", { className: "mt-2 text-3xl font-bold", children: "\u041F\u0440\u043E\u0434\u0430\u0436\u0430 \u043E\u0444\u043E\u0440\u043C\u043B\u0435\u043D\u0430!" }), _jsxs("p", { className: "mt-2 text-4xl font-bold", children: [successOverlay.total.toFixed(2), " \u0441\u043E\u043C"] }), successOverlay.customerName ? _jsx("p", { className: "mt-1 text-lg", children: successOverlay.customerName }) : null, _jsx("div", { className: "mt-5", children: _jsx("button", { className: "h-11 w-full rounded-xl bg-white/20 disabled:opacity-50", disabled: !successOverlay.saleId, onClick: () => printReceipt(successOverlay.saleId), children: "\u041D\u0430\u043F\u0435\u0447\u0430\u0442\u0430\u0442\u044C \u0447\u0435\u043A" }) })] }) })) : null] }));
+                }, onClose: () => setShowScanner(false) }, scannerSession)) : null, successOverlay ? (_jsx("div", { className: `fixed inset-0 z-50 flex items-center justify-center p-4 text-white ${successOverlay.offline ? "bg-amber-600/95" : "bg-emerald-600/95"}`, children: _jsxs("div", { className: `w-full max-w-lg rounded-2xl p-6 text-center ${successOverlay.offline ? "bg-amber-700" : "bg-emerald-700"}`, children: [_jsx("div", { className: "text-6xl", children: successOverlay.offline ? "📴" : "✓" }), _jsx("h2", { className: "mt-2 text-3xl font-bold", children: successOverlay.offline ? "Сохранено офлайн" : "Продажа оформлена!" }), _jsxs("p", { className: "mt-2 text-4xl font-bold", children: [successOverlay.total.toFixed(2), " \u0441\u043E\u043C"] }), successOverlay.customerName ? _jsx("p", { className: "mt-1 text-lg", children: successOverlay.customerName }) : null, successOverlay.offline ? (_jsx("p", { className: "mt-3 text-sm", children: "\u041D\u0435\u0442 \u0438\u043D\u0442\u0435\u0440\u043D\u0435\u0442\u0430. \u0427\u0435\u043A \u0441\u043E\u0445\u0440\u0430\u043D\u0451\u043D \u043B\u043E\u043A\u0430\u043B\u044C\u043D\u043E \u0438 \u0430\u0432\u0442\u043E\u043C\u0430\u0442\u0438\u0447\u0435\u0441\u043A\u0438 \u043E\u0442\u043F\u0440\u0430\u0432\u0438\u0442\u0441\u044F \u043D\u0430 \u0441\u0435\u0440\u0432\u0435\u0440, \u043A\u043E\u0433\u0434\u0430 \u0441\u0435\u0442\u044C \u043F\u043E\u044F\u0432\u0438\u0442\u0441\u044F. \u041F\u0435\u0447\u0430\u0442\u044C \u0447\u0435\u043A\u0430 \u043F\u043E\u043A\u0430 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u043D\u0430." })) : (_jsx("div", { className: "mt-5", children: _jsx("button", { className: "h-11 w-full rounded-xl bg-white/20 disabled:opacity-50", disabled: !successOverlay.saleId, onClick: () => printReceipt(successOverlay.saleId), children: "\u041D\u0430\u043F\u0435\u0447\u0430\u0442\u0430\u0442\u044C \u0447\u0435\u043A" }) }))] }) })) : null] }));
 }
 function SectionTitle({ title, className = "" }) {
     return _jsx("h3", { className: `mb-2 text-sm font-semibold uppercase text-slate-500 ${className}`, children: title });

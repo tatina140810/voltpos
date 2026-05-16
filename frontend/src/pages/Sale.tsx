@@ -4,6 +4,7 @@ import axios from "axios";
 
 import { BarcodeScanner } from "../components/BarcodeScanner";
 import { NumberInput } from "../components/NumberInput";
+import { OfflineQueueBadge } from "../components/OfflineQueueBadge";
 import { ShiftWidget } from "../components/ShiftWidget";
 import { useBusinessSettings } from "../hooks/useBusinessSettings";
 import { api } from "../lib/api";
@@ -70,6 +71,7 @@ export function SalePage() {
     total: number;
     customerName: string | null;
     saleId: number | null;
+    offline?: boolean;
   } | null>(null);
 
   const [customerPhone, setCustomerPhone] = useState("");
@@ -387,20 +389,22 @@ export function SalePage() {
 
       if (!navigator.onLine) {
         await queueOfflineSale(payload);
-        return null;
+        // Возвращаем флаг offline=true чтобы onSuccess показал понятное сообщение.
+        return { id: null, offline: true } as { id: number | null; offline?: boolean };
       }
       const response = await api.post("/sales", payload);
-      return response.data as { id: number };
+      return response.data as { id: number; offline?: boolean };
     },
     onSuccess: (data) => {
       setSuccessOverlay({
         total,
         customerName: customer?.name ?? null,
         saleId: data?.id ?? null,
+        offline: Boolean(data?.offline),
       });
       setTimeout(() => {
         setSuccessOverlay(null);
-      }, 3000);
+      }, data?.offline ? 4500 : 3000);
       resetSale();
       setShowCheckoutMobile(false);
       setMessage("");
@@ -489,6 +493,7 @@ export function SalePage() {
       <h1 className="mb-3 text-3xl font-semibold">Касса</h1>
 
       <ShiftWidget />
+      <OfflineQueueBadge />
 
       <div className="grid gap-4 md:grid-cols-5">
         <section className="rounded-2xl bg-white p-3 shadow md:col-span-3">
@@ -969,21 +974,34 @@ export function SalePage() {
       ) : null}
 
       {successOverlay ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-emerald-600/95 p-4 text-white">
-          <div className="w-full max-w-lg rounded-2xl bg-emerald-700 p-6 text-center">
-            <div className="text-6xl">✓</div>
-            <h2 className="mt-2 text-3xl font-bold">Продажа оформлена!</h2>
+        <div className={`fixed inset-0 z-50 flex items-center justify-center p-4 text-white ${
+          successOverlay.offline ? "bg-amber-600/95" : "bg-emerald-600/95"
+        }`}>
+          <div className={`w-full max-w-lg rounded-2xl p-6 text-center ${
+            successOverlay.offline ? "bg-amber-700" : "bg-emerald-700"
+          }`}>
+            <div className="text-6xl">{successOverlay.offline ? "📴" : "✓"}</div>
+            <h2 className="mt-2 text-3xl font-bold">
+              {successOverlay.offline ? "Сохранено офлайн" : "Продажа оформлена!"}
+            </h2>
             <p className="mt-2 text-4xl font-bold">{successOverlay.total.toFixed(2)} сом</p>
             {successOverlay.customerName ? <p className="mt-1 text-lg">{successOverlay.customerName}</p> : null}
-            <div className="mt-5">
-              <button
-                className="h-11 w-full rounded-xl bg-white/20 disabled:opacity-50"
-                disabled={!successOverlay.saleId}
-                onClick={() => printReceipt(successOverlay.saleId)}
-              >
-                Напечатать чек
-              </button>
-            </div>
+            {successOverlay.offline ? (
+              <p className="mt-3 text-sm">
+                Нет интернета. Чек сохранён локально и автоматически отправится на сервер,
+                когда сеть появится. Печать чека пока недоступна.
+              </p>
+            ) : (
+              <div className="mt-5">
+                <button
+                  className="h-11 w-full rounded-xl bg-white/20 disabled:opacity-50"
+                  disabled={!successOverlay.saleId}
+                  onClick={() => printReceipt(successOverlay.saleId)}
+                >
+                  Напечатать чек
+                </button>
+              </div>
+            )}
           </div>
         </div>
       ) : null}

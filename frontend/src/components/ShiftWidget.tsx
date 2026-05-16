@@ -31,8 +31,13 @@ type ShiftReport = {
     card_refunded?: string;
     transfer_refunded?: string;
     inkas: string;
+    inkas_cash?: string;
+    inkas_card?: string;
+    inkas_transfer?: string;
     opening_cash: string;
     expected_cash: string;
+    expected_card?: string;
+    expected_transfer?: string;
   };
   report_kind: "X" | "Z";
   discrepancy: string | null;
@@ -291,9 +296,41 @@ export function ShiftWidget() {
                     <td className="py-2 text-right tabular-nums text-xs text-red-600">−{fmt(reportShown.totals.transfer_refunded)}</td>
                   </tr>
                 ) : null}
-                <tr className="border-b"><td className="py-2 text-slate-600">Инкассация</td><td className="py-2 text-right tabular-nums text-red-700">−{fmt(reportShown.totals.inkas)}</td></tr>
+                {Number(reportShown.totals.inkas_cash ?? reportShown.totals.inkas) > 0 ? (
+                  <tr className="border-b">
+                    <td className="py-2 text-slate-600">🏦 Выдано / инкассировано (нал)</td>
+                    <td className="py-2 text-right tabular-nums text-red-700">−{fmt(reportShown.totals.inkas_cash ?? reportShown.totals.inkas)}</td>
+                  </tr>
+                ) : null}
+                {Number(reportShown.totals.inkas_card ?? 0) > 0 ? (
+                  <tr className="border-b">
+                    <td className="py-2 text-slate-600">🏦 Списано с карты</td>
+                    <td className="py-2 text-right tabular-nums text-red-700">−{fmt(reportShown.totals.inkas_card ?? "0")}</td>
+                  </tr>
+                ) : null}
+                {Number(reportShown.totals.inkas_transfer ?? 0) > 0 ? (
+                  <tr className="border-b">
+                    <td className="py-2 text-slate-600">🏦 Списано переводом</td>
+                    <td className="py-2 text-right tabular-nums text-red-700">−{fmt(reportShown.totals.inkas_transfer ?? "0")}</td>
+                  </tr>
+                ) : null}
                 <tr className="border-b bg-slate-50"><td className="py-2 text-slate-600">Касса на старте</td><td className="py-2 text-right tabular-nums">{fmt(reportShown.totals.opening_cash)}</td></tr>
-                <tr className="border-b bg-emerald-50"><td className="py-2 font-semibold">Должно быть наличных</td><td className="py-2 text-right tabular-nums text-base font-bold text-emerald-700">{fmt(reportShown.totals.expected_cash)}</td></tr>
+                <tr className="border-b bg-emerald-50">
+                  <td className="py-2 font-semibold">💵 Должно быть наличных</td>
+                  <td className="py-2 text-right tabular-nums text-base font-bold text-emerald-700">{fmt(reportShown.totals.expected_cash)}</td>
+                </tr>
+                {reportShown.totals.expected_card !== undefined && Number(reportShown.totals.expected_card) !== 0 ? (
+                  <tr className="border-b bg-emerald-50">
+                    <td className="py-2 font-semibold">💳 Должно быть на карте</td>
+                    <td className="py-2 text-right tabular-nums font-bold text-emerald-700">{fmt(reportShown.totals.expected_card ?? "0")}</td>
+                  </tr>
+                ) : null}
+                {reportShown.totals.expected_transfer !== undefined && Number(reportShown.totals.expected_transfer) !== 0 ? (
+                  <tr className="border-b bg-emerald-50">
+                    <td className="py-2 font-semibold">📱 Должно быть переводом</td>
+                    <td className="py-2 text-right tabular-nums font-bold text-emerald-700">{fmt(reportShown.totals.expected_transfer ?? "0")}</td>
+                  </tr>
+                ) : null}
                 {reportShown.shift.closing_cash_actual !== null ? (
                   <>
                     <tr className="border-b"><td className="py-2 text-slate-600">Факт. в кассе</td><td className="py-2 text-right tabular-nums font-semibold">{fmt(reportShown.shift.closing_cash_actual)}</td></tr>

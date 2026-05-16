@@ -125,14 +125,20 @@ async def _compute_shift_totals(db: AsyncSession, shift: Shift) -> dict:
         card_in += s.paid_card or _zero()
         transfer_in += s.paid_transfer or _zero()
 
-    inkas = (
+    # Инкассации/выдачи смены, разбитые по методу. Нужно чтобы посчитать
+    # «должно быть» отдельно для нал/карта/перевод.
+    inkas_rows = (
         await db.execute(
-            select(func.coalesce(func.sum(CashWithdrawal.amount), 0)).where(
+            select(CashWithdrawal).where(
                 CashWithdrawal.shift_id == shift.id,
                 CashWithdrawal.is_deleted.is_(False),
             )
         )
-    ).scalar_one() or _zero()
+    ).scalars().all()
+    inkas_cash = sum(((r.amount or _zero()) for r in inkas_rows if (r.method or "cash") == "cash"), start=_zero())
+    inkas_card = sum(((r.amount or _zero()) for r in inkas_rows if r.method == "card"), start=_zero())
+    inkas_transfer = sum(((r.amount or _zero()) for r in inkas_rows if r.method == "transfer"), start=_zero())
+    inkas = inkas_cash + inkas_card + inkas_transfer
 
     # Возвраты клиентам в эту смену (журнал Refund). Отдельная строка в Z-отчёте,
     # чтобы кассир видел оборот, а не только нетто-выручку.
@@ -158,7 +164,11 @@ async def _compute_shift_totals(db: AsyncSession, shift: Shift) -> dict:
     card_in_gross = card_in + card_refunded
     transfer_in_gross = transfer_in + transfer_refunded
 
-    expected_cash = (shift.opening_cash or _zero()) + cash_in - Decimal(inkas)
+    # «Должно быть» по каждому методу = пришло − инкассировано/выдано тем же методом.
+    # Для cash добавляем opening_cash (стартовый остаток в кассе).
+    expected_cash = (shift.opening_cash or _zero()) + cash_in - inkas_cash
+    expected_card = card_in - inkas_card
+    expected_transfer = transfer_in - inkas_transfer
 
     return {
         "sales_count": sales_count,
@@ -173,9 +183,14 @@ async def _compute_shift_totals(db: AsyncSession, shift: Shift) -> dict:
         "cash_refunded": str(cash_refunded),
         "card_refunded": str(card_refunded),
         "transfer_refunded": str(transfer_refunded),
-        "inkas": str(Decimal(inkas)),
+        "inkas": str(inkas),
+        "inkas_cash": str(inkas_cash),
+        "inkas_card": str(inkas_card),
+        "inkas_transfer": str(inkas_transfer),
         "opening_cash": str(shift.opening_cash or _zero()),
         "expected_cash": str(expected_cash),
+        "expected_card": str(expected_card),
+        "expected_transfer": str(expected_transfer),
     }
 
 

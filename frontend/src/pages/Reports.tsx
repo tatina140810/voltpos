@@ -81,7 +81,27 @@ type SummaryReport = {
   };
   returns: { count: number; amount: string };
   debt: { new_debt_amount: string; outstanding_total: string };
-  cash_withdrawals: { count: number; total: string; items: Withdrawal[] };
+  cash_withdrawals: {
+    count: number;
+    total: string;
+    by_method?: { cash: string; card: string; transfer: string };
+    items: Withdrawal[];
+  };
+  supplier_payments?: {
+    count: number;
+    total: string;
+    by_supplier: Array<{
+      supplier_id: number;
+      supplier_name: string | null;
+      total: string;
+      cash: string;
+      card: string;
+      transfer: string;
+      count: number;
+    }>;
+  };
+  net_card?: string;
+  net_transfer?: string;
   net_cash: string;
   by_seller: SellerRow[];
   by_day: { date: string; revenue: number; sales_count: number }[];
@@ -612,6 +632,50 @@ export function ReportsPage() {
             </section>
           ) : null}
 
+          {/* === Оплаты поставщикам за период === */}
+          {data.supplier_payments && data.supplier_payments.count > 0 ? (
+            <section className="mt-4 rounded-2xl bg-white p-4 shadow">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-lg font-semibold">
+                  🏭 Оплачено поставщикам ({data.supplier_payments.count})
+                </h2>
+                <span className="text-sm font-semibold text-slate-700">
+                  −{num(data.supplier_payments.total)} сом
+                </span>
+              </div>
+              <p className="mb-3 text-xs text-slate-500">
+                Это движение денег: уменьшается касса/счёт, но <b>не уменьшает прибыль</b>
+                (товар становится активом, а его себестоимость спишется при продаже).
+              </p>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-slate-50 text-left text-xs uppercase tracking-wide text-slate-500">
+                    <tr>
+                      <th className="px-2 py-2">Поставщик</th>
+                      <th className="px-2 py-2 text-right">Платежей</th>
+                      <th className="px-2 py-2 text-right">Нал</th>
+                      <th className="px-2 py-2 text-right">Карта</th>
+                      <th className="px-2 py-2 text-right">Перевод</th>
+                      <th className="px-2 py-2 text-right">Итого</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {data.supplier_payments.by_supplier.map((s) => (
+                      <tr key={s.supplier_id} className="border-t">
+                        <td className="px-2 py-2">{s.supplier_name ?? `#${s.supplier_id}`}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{s.count}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{num(s.cash)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{num(s.card)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums">{num(s.transfer)}</td>
+                        <td className="px-2 py-2 text-right tabular-nums font-semibold">{num(s.total)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </section>
+          ) : null}
+
           {/* === Потери (списания) === */}
           {writeoffsQuery.data && writeoffsQuery.data.summary.count > 0 ? (
             <section className="mt-4 rounded-2xl bg-white p-4 shadow">
@@ -832,6 +896,9 @@ function AccountingSummary({
   const cardIn = Number(data.revenue.card);
   const transferIn = Number(data.revenue.transfer);
   const inkas = Number(data.cash_withdrawals.total);
+  const inkasCash = Number(data.cash_withdrawals.by_method?.cash ?? data.cash_withdrawals.total);
+  const inkasCard = Number(data.cash_withdrawals.by_method?.card ?? 0);
+  const inkasTransfer = Number(data.cash_withdrawals.by_method?.transfer ?? 0);
   const sale = Number(data.revenue.total); // продажа уже с учётом скидок
   const cost = Number(data.sales.cost_total ?? 0);
   const salary = Math.max(0, Number(salaryInput) || 0);
@@ -852,9 +919,11 @@ function AccountingSummary({
 
   // Сколько должно быть к концу периода — наличка минус инкассация, карта и
   // перевод трогаются только если из них что-то выдают (по умолчанию нет).
-  const cashLeft = cashIn - inkas;
-  const cardLeft = cardIn;
-  const transferLeft = transferIn;
+  // «Должно остаться» — вычитаем только выдачи того же метода (раньше неправильно
+  // вычитали всю инкассацию из наличных).
+  const cashLeft = cashIn - inkasCash;
+  const cardLeft = cardIn - inkasCard;
+  const transferLeft = transferIn - inkasTransfer;
 
   // Прибыль без инкассации (это просто перемещение денег, не расход бизнеса)
   // и без скидки (она уже в продаже). Плюс излишек/недостача ревизии (rev_net).

@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.dependencies import get_current_user, require_role
 from app.models.cash_withdrawal import CashWithdrawal
+from app.models.supplier import Supplier
 from app.models.user import User
 from app.schemas.cash_withdrawal import CashWithdrawalCreate, CashWithdrawalOut
 from app.services.push_service import build_payload, send_push_to_org_owners
@@ -47,6 +48,17 @@ async def list_withdrawals(
         if user_ids
         else {}
     )
+    supplier_ids = {r.supplier_id for r in rows if r.supplier_id}
+    suppliers = (
+        {
+            s.id: s.name
+            for s in (
+                await db.execute(select(Supplier).where(Supplier.id.in_(supplier_ids)))
+            ).scalars().all()
+        }
+        if supplier_ids
+        else {}
+    )
 
     return [
         CashWithdrawalOut(
@@ -54,6 +66,10 @@ async def list_withdrawals(
             recipient=r.recipient,
             amount=r.amount,
             reason=r.reason,
+            method=r.method or "cash",
+            kind=r.kind or "expense",
+            supplier_id=r.supplier_id,
+            supplier_name=suppliers.get(r.supplier_id) if r.supplier_id else None,
             issued_by_id=r.issued_by_id,
             issued_by_name=users[r.issued_by_id].name if r.issued_by_id in users else None,
             created_at=r.created_at,
@@ -73,6 +89,23 @@ async def create_withdrawal(
         raise HTTPException(status_code=400, detail="Укажите получателя")
     if payload.amount <= 0:
         raise HTTPException(status_code=400, detail="Сумма должна быть больше нуля")
+    if payload.kind == "supplier" and not payload.supplier_id:
+        raise HTTPException(status_code=400, detail="Для оплаты поставщику выберите поставщика из базы")
+    # Если выбран поставщик — проверим что он наш.
+    supplier_name: str | None = None
+    if payload.supplier_id:
+        sup = (
+            await db.execute(
+                select(Supplier).where(
+                    Supplier.id == payload.supplier_id,
+                    Supplier.org_id == user.org_id,
+                    Supplier.is_deleted.is_(False),
+                )
+            )
+        ).scalar_one_or_none()
+        if not sup:
+            raise HTTPException(status_code=404, detail="Поставщик не найден")
+        supplier_name = sup.name
 
     # Привязываем к открытой смене кассира (для X/Z-отчётов).
     from app.models.shift import Shift
@@ -93,6 +126,9 @@ async def create_withdrawal(
         amount=payload.amount,
         reason=(payload.reason or "").strip() or None,
         shift_id=open_shift.id if open_shift else None,
+        method=payload.method or "cash",
+        kind=payload.kind or "expense",
+        supplier_id=payload.supplier_id,
     )
     db.add(row)
     await db.commit()
@@ -115,6 +151,10 @@ async def create_withdrawal(
         recipient=row.recipient,
         amount=row.amount,
         reason=row.reason,
+        method=row.method or "cash",
+        kind=row.kind or "expense",
+        supplier_id=row.supplier_id,
+        supplier_name=supplier_name,
         issued_by_id=row.issued_by_id,
         issued_by_name=user.name,
         created_at=row.created_at,

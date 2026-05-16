@@ -22,3 +22,10 @@ class CashWithdrawal(Base, TimestampMixin, SoftDeleteMixin):
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     reason: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     shift_id: Mapped[int | None] = mapped_column(ForeignKey("shifts.id"), nullable=True, index=True)
+    # Какой счёт/касса уменьшается. По умолчанию cash (для обратной совместимости).
+    method: Mapped[str] = mapped_column(String(10), nullable=False, default="cash", server_default="cash")
+    # Категория движения: inkas (в банк), owner (владельцу), expense (текущий расход),
+    # supplier (оплата поставщику — не уменьшает прибыль), other.
+    kind: Mapped[str] = mapped_column(String(12), nullable=False, default="expense", server_default="expense")
+    # Если kind=supplier — ссылка на поставщика. Иначе NULL.
+    supplier_id: Mapped[int | None] = mapped_column(ForeignKey("suppliers.id"), nullable=True, index=True)

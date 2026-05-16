@@ -251,6 +251,39 @@ async def summary_report(
         else {}
     )
     cw_total = sum((r.amount for r in cw_rows), start=_zero())
+    # Разбивка инкассации/выдач по методу (нал/карта/перевод) — чтобы корректно
+    # считать «должно остаться» для каждой кассы.
+    cw_cash = sum((r.amount for r in cw_rows if (r.method or "cash") == "cash"), start=_zero())
+    cw_card = sum((r.amount for r in cw_rows if r.method == "card"), start=_zero())
+    cw_transfer = sum((r.amount for r in cw_rows if r.method == "transfer"), start=_zero())
+
+    # Оплаты поставщикам — это движение денег, не расход бизнеса (товар уже актив
+    # или ещё не пришёл). Показываем отдельно и НЕ вычитаем из прибыли.
+    supplier_payments_total = _zero()
+    supplier_payments_by_id: dict[int, dict] = {}
+    for r in cw_rows:
+        if r.kind == "supplier" and r.supplier_id:
+            supplier_payments_total += r.amount or _zero()
+            agg = supplier_payments_by_id.setdefault(
+                r.supplier_id,
+                {"supplier_id": r.supplier_id, "supplier_name": None, "total": _zero(), "cash": _zero(), "card": _zero(), "transfer": _zero(), "count": 0},
+            )
+            agg["total"] += r.amount or _zero()
+            agg["count"] += 1
+            method = r.method or "cash"
+            if method in ("cash", "card", "transfer"):
+                agg[method] += r.amount or _zero()
+    # Заполним имена поставщиков.
+    if supplier_payments_by_id:
+        from app.models.supplier import Supplier as _Supplier
+        sup_names = {
+            s.id: s.name
+            for s in (
+                await db.execute(select(_Supplier).where(_Supplier.id.in_(supplier_payments_by_id.keys())))
+            ).scalars().all()
+        }
+        for sid, agg in supplier_payments_by_id.items():
+            agg["supplier_name"] = sup_names.get(sid)
 
     # === 6. Текущая общая задолженность (на момент запроса, по всей организации) ===
     # NB: при создании DebtPayment в routers/customers.py paid_cash/card/transfer
@@ -270,8 +303,10 @@ async def summary_report(
     for s in all_debt_sales:
         outstanding_total += max(_zero(), s.total - _paid_total(s))
 
-    # === 7. Чистая наличка = наличная выручка − инкассация ===
-    net_cash = revenue_cash - cw_total
+    # === 7. Чистый остаток по методам = выручка − выдачи того же метода ===
+    net_cash = revenue_cash - cw_cash
+    net_card = revenue_card - cw_card
+    net_transfer = revenue_transfer - cw_transfer
 
     # === 7b. Доставки и установки за период ===
     deliveries: list[dict] = []
@@ -425,6 +460,11 @@ async def summary_report(
         "cash_withdrawals": {
             "count": len(cw_rows),
             "total": str(cw_total),
+            "by_method": {
+                "cash": str(cw_cash),
+                "card": str(cw_card),
+                "transfer": str(cw_transfer),
+            },
             "items": [
                 {
                     "id": r.id,
@@ -432,12 +472,33 @@ async def summary_report(
                     "recipient": r.recipient,
                     "amount": str(r.amount),
                     "reason": r.reason,
+                    "method": r.method or "cash",
+                    "kind": r.kind or "expense",
+                    "supplier_id": r.supplier_id,
                     "issued_by_name": cw_users.get(r.issued_by_id),
                 }
                 for r in cw_rows
             ],
         },
+        "supplier_payments": {
+            "count": sum(int(s["count"]) for s in supplier_payments_by_id.values()),
+            "total": str(supplier_payments_total),
+            "by_supplier": [
+                {
+                    "supplier_id": s["supplier_id"],
+                    "supplier_name": s["supplier_name"],
+                    "total": str(s["total"]),
+                    "cash": str(s["cash"]),
+                    "card": str(s["card"]),
+                    "transfer": str(s["transfer"]),
+                    "count": s["count"],
+                }
+                for s in supplier_payments_by_id.values()
+            ],
+        },
         "net_cash": str(net_cash),
+        "net_card": str(net_card),
+        "net_transfer": str(net_transfer),
         "profit": {
             "revenue": str(revenue_total),
             "cost": str(cost_total),

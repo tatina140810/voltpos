@@ -329,7 +329,9 @@ export function SalePage() {
         },
         onError: (error) => {
             let detail = "Ошибка при оформлении продажи";
+            let status;
             if (axios.isAxiosError(error)) {
+                status = error.response?.status;
                 const d = error.response?.data?.detail;
                 detail =
                     typeof d === "string"
@@ -339,6 +341,15 @@ export function SalePage() {
                             : error.message;
             }
             setMessage(detail);
+            // 400 «откройте смену» — поднимем экран наверх, чтобы кассир увидел виджет смены.
+            if (status === 400 && /смен/i.test(detail)) {
+                try {
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                }
+                catch { /* SSR-safe */ }
+                // Лёгкий alert, чтобы юзер точно заметил.
+                setTimeout(() => alert("⛔ " + detail), 50);
+            }
         },
     });
     const needsCustomer = saleType === "debt";

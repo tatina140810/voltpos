@@ -92,10 +92,10 @@ async def _create_sale(payload: SaleCreate, db: AsyncSession, current_user: User
         if await _stock_balance(db, item.product_id) < need:
             raise HTTPException(status_code=400, detail=f"Недостаточно остатка по товару {item.product_id}")
 
-    # Если у кассира открыта смена — привязываем продажу к ней (для X/Z-отчётов).
-    # Если нет — автоматически создаём с opening_cash=0, чтобы продажи не висели
-    # «вне смены» и было что считать в Z-отчёте. Кассир позже может вручную
-    # перезакрыть/перепроверить.
+    # Привязка к смене обязательна для онлайн-продаж — иначе кассовая дисциплина
+    # рушится: деньги физически идут мимо учёта, Z-отчёт не сходится.
+    # Исключение: offline_id — это продажа сделанная без интернета и сейчас
+    # синкается. Блокировать её нельзя (данные уже есть на устройстве).
     from app.models.shift import Shift
     open_shift = (
         await db.execute(
@@ -106,17 +106,11 @@ async def _create_sale(payload: SaleCreate, db: AsyncSession, current_user: User
             )
         )
     ).scalar_one_or_none()
-    if open_shift is None:
-        open_shift = Shift(
-            org_id=current_user.org_id,
-            cashier_id=current_user.id,
-            opened_at=datetime.now(timezone.utc),
-            opening_cash=Decimal("0"),
-            status="open",
-            notes="auto-opened (продажа без открытой смены)",
+    if open_shift is None and not payload.offline_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Сначала откройте смену (виджет «Смена» сверху на кассе). Без открытой смены продажа не оформляется.",
         )
-        db.add(open_shift)
-        await db.flush()
 
     sale = Sale(
         org_id=current_user.org_id,

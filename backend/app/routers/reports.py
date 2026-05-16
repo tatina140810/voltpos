@@ -166,13 +166,24 @@ async def summary_report(
     if to:
         dp_stmt = dp_stmt.where(func.date(DebtPayment.created_at) < (to + timedelta(days=1)))
     period_dps = list((await db.execute(dp_stmt)).scalars().all())
+    # Сохраняем «нативную» выручку (только от продаж в периоде) ДО добавления погашений —
+    # бухгалтеру нужно отличать «продал» от «получил старый долг».
+    sales_cash = revenue_cash
+    sales_card = revenue_card
+    sales_transfer = revenue_transfer
+    debt_payments_cash = _zero()
+    debt_payments_card = _zero()
+    debt_payments_transfer = _zero()
     for dp in period_dps:
         amount = dp.amount or _zero()
         if dp.method == "cash":
+            debt_payments_cash += amount
             revenue_cash += amount
         elif dp.method == "card":
+            debt_payments_card += amount
             revenue_card += amount
         else:
+            debt_payments_transfer += amount
             revenue_transfer += amount
 
     revenue_total = revenue_cash + revenue_card + revenue_transfer
@@ -338,10 +349,41 @@ async def summary_report(
                 except Exception:
                     pass
 
+    # === 8c. Ревизии: излишки и недостачи за период (по закупочной цене) ===
+    # Движения от ревизии создаются с reason LIKE 'Ревизия #...' и не попадают
+    # ни в /reports/writeoffs, ни в cost_total (там только sale_items).
+    # Включаем их в сводный отчёт как отдельную статью, чтобы 180 сом недостачи
+    # после ревизии были видны бухгалтеру.
+    rev_stmt = (
+        select(StockMovement, Product.purchase_price)
+        .join(Product, Product.id == StockMovement.product_id)
+        .where(
+            StockMovement.org_id == user.org_id,
+            StockMovement.is_deleted.is_(False),
+            StockMovement.reason.ilike("Ревизия%"),
+        )
+    )
+    if from_:
+        rev_stmt = rev_stmt.where(func.date(StockMovement.created_at) >= from_)
+    if to:
+        rev_stmt = rev_stmt.where(func.date(StockMovement.created_at) <= to)
+    rev_rows = (await db.execute(rev_stmt)).all()
+    rev_surplus_value = _zero()   # излишки (in_stock от ревизии) — +
+    rev_shortage_value = _zero()  # недостачи (out от ревизии) — −
+    for m, purchase_price in rev_rows:
+        eff_qty = Decimal(m.quantity_decimal) if m.quantity_decimal is not None else Decimal(m.quantity)
+        value = eff_qty * (purchase_price or _zero())
+        if m.type == StockMovementType.in_stock:
+            rev_surplus_value += value
+        else:
+            rev_shortage_value += value  # храним положительной, знак в UI
+    rev_net = rev_surplus_value - rev_shortage_value  # >0 излишек итого, <0 недостача
+
     # Прибыль = выручка − себестоимость − зарплата − прочие расходы.
     # Скидка уже в revenue_total (продажа уже с учётом). Инкассация — это движение
     # денег, не расход бизнеса, в прибыли не учитывается.
-    profit = revenue_total - cost_total - salary_total - other_expenses_total
+    # Ревизионная недостача — это потеря, излишек — «бесплатный товар». Учитываем в прибыли.
+    profit = revenue_total - cost_total - salary_total - other_expenses_total + rev_net
 
     # === 9. Финальная сборка ответа ===
     return {
@@ -351,6 +393,19 @@ async def summary_report(
             "card": str(revenue_card),
             "transfer": str(revenue_transfer),
             "total": str(revenue_total),
+            # Разделение: бухгалтер должен отличать «продажа» от «получили старый долг».
+            "sales_only": {
+                "cash": str(sales_cash),
+                "card": str(sales_card),
+                "transfer": str(sales_transfer),
+                "total": str(sales_cash + sales_card + sales_transfer),
+            },
+            "debt_payments": {
+                "cash": str(debt_payments_cash),
+                "card": str(debt_payments_card),
+                "transfer": str(debt_payments_transfer),
+                "total": str(debt_payments_cash + debt_payments_card + debt_payments_transfer),
+            },
         },
         "sales": {
             "count": len(sales),
@@ -388,7 +443,16 @@ async def summary_report(
             "cost": str(cost_total),
             "salary": str(salary_total),
             "other_expenses": str(other_expenses_total),
+            "revision_surplus": str(rev_surplus_value),
+            "revision_shortage": str(rev_shortage_value),
+            "revision_net": str(rev_net),
             "total": str(profit),
+        },
+        "revisions_period": {
+            "surplus_value": str(rev_surplus_value),
+            "shortage_value": str(rev_shortage_value),
+            "net_value": str(rev_net),
+            "movements_count": len(rev_rows),
         },
         "by_seller": [
             {

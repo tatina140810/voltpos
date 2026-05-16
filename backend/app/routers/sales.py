@@ -428,8 +428,14 @@ async def return_sale_items(
     sale.total = max(Decimal("0"), (sale.total or Decimal("0")) - return_total)
 
     # Если ВСЕ позиции продажи теперь возвращены (с учётом прошлых частичных) — статус returned.
+    # И обнуляем хвосты округления: при пропорциональном возврате весовых товаров
+    # могут остаться копейки в total/paid_*, искажающие отчёты.
     if all(it.returned_at is not None for it in all_sale_items):
         sale.status = SaleStatus.returned
+        sale.total = Decimal("0")
+        sale.paid_cash = Decimal("0")
+        sale.paid_card = Decimal("0")
+        sale.paid_transfer = Decimal("0")
 
     await db.commit()
 

@@ -175,6 +175,11 @@ async def shift_report(
         totals = shift.totals_snapshot
     else:
         totals = await _compute_shift_totals(db, shift)
+        # Lazy backfill: для смен, закрытых ДО релиза snapshot — фиксируем
+        # текущие итоги, чтобы повторные запросы не «дрейфовали» от поздних возвратов.
+        if shift.status == "closed" and not shift.totals_snapshot:
+            shift.totals_snapshot = totals
+            await db.commit()
 
     diff = None
     if shift.closing_cash_actual is not None:

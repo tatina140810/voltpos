@@ -334,6 +334,18 @@ async def create_org(payload: OrgCreateRequest, db: AsyncSession = Depends(get_d
     await db.commit()
     await db.refresh(org)
 
+    # Push супер-админам о новом магазине.
+    try:
+        import asyncio
+        from app.services.push_service import send_super_push
+        asyncio.create_task(send_super_push(
+            title="🆕 Новый магазин",
+            body=f"{org.name} (код {org.org_code})",
+            url=f"/super/orgs/{org.id}",
+        ))
+    except Exception:
+        pass  # push не критично, не валим создание орг
+
     today = date.today()
     status, days_left = _compute_status(org, today)
     return OrgListItem(

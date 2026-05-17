@@ -1,0 +1,16 @@
+{
+  "name": "VoltPos Admin",
+  "short_name": "VoltAdmin",
+  "description": "Управление платформой VoltPos: магазины, подписки, мониторинг",
+  "start_url": "/super/orgs",
+  "scope": "/super/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#4F46E5",
+  "orientation": "portrait-primary",
+  "icons": [
+    { "src": "/admin-icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/logo-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/logo-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
+  ]
+}

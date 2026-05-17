@@ -11,6 +11,7 @@ from sqlalchemy import delete, select
 from app.config import settings
 from app.database import SessionLocal
 from app.models.push_subscription import PushSubscription
+from app.models.super_push_subscription import SuperPushSubscription
 from app.models.user import User, UserRole
 
 logger = logging.getLogger(__name__)
@@ -20,7 +21,7 @@ def build_payload(event_type: str, data: dict[str, Any]) -> dict[str, Any]:
     """Сообщение для push: title + body + параметры отображения.
     Эмодзи в title — единственный «иконочный» элемент, надёжный кросс-платформенно."""
 
-    icons = {"sale": "🛒", "return": "↩️", "writeoff": "📦", "cashout": "💵", "expiry_alert": "⏰", "debt_alert": "📞"}
+    icons = {"sale": "🛒", "return": "↩️", "writeoff": "📦", "cashout": "💵", "expiry_alert": "⏰", "debt_alert": "📞", "super_event": "🛠"}
     titles = {
         "sale": "Новая продажа",
         "return": "Возврат товара",
@@ -28,6 +29,7 @@ def build_payload(event_type: str, data: dict[str, Any]) -> dict[str, Any]:
         "cashout": "Инкассация",
         "expiry_alert": "Скоро истекает срок",
         "debt_alert": "Долги: позвонить",
+        "super_event": "Volt-Pos Admin",
     }
 
     icon = icons.get(event_type, "🔔")
@@ -69,6 +71,12 @@ def build_payload(event_type: str, data: dict[str, Any]) -> dict[str, Any]:
         if len(items) > 5:
             body += f"\nИ ещё {len(items) - 5} позиций"
         url = "/stock?expiring=1"
+    elif event_type == "super_event":
+        body = str(data.get("body") or "")
+        url = str(data.get("url") or "/super/orgs")
+        # Если в data передан кастомный заголовок — используем его.
+        if data.get("title"):
+            title = str(data["title"])
     elif event_type == "debt_alert":
         items = data.get("items") or []
         head = data.get("count_label") or f"{len(items)} клиент(ов) с долгами"
@@ -159,3 +167,50 @@ async def send_push_to_org_owners(org_id: int, payload: dict[str, Any]) -> None:
         if dead:
             await db.execute(delete(PushSubscription).where(PushSubscription.endpoint.in_(dead)))
             await db.commit()
+
+
+async def send_super_push(title: str, body: str, url: str = "/super/orgs") -> None:
+    """Рассылка push всем активным подпискам супер-админов платформы.
+    Безопасно вызывать из BackgroundTasks или sync-кода (асинхронно через asyncio.create_task)."""
+    if not settings.vapid_private_key or not settings.vapid_public_key:
+        logger.warning("VAPID keys not configured, skipping super push")
+        return
+
+    payload = build_payload("super_event", {"title": title, "body": body, "url": url})
+
+    async with SessionLocal() as db:
+        subs = list(
+            (
+                await db.execute(select(SuperPushSubscription))
+            ).scalars().all()
+        )
+        if not subs:
+            return
+        dead: list[str] = []
+        for sub in subs:
+            try:
+                await asyncio.to_thread(_send_one, sub.endpoint, sub.p256dh, sub.auth, payload)
+            except WebPushException as exc:
+                status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                if status_code in (404, 410):
+                    dead.append(sub.endpoint)
+                else:
+                    logger.warning("Super push failed for %s: %s", sub.endpoint[:60], exc)
+            except Exception as exc:
+                logger.warning("Super push transport error: %s", exc)
+        if dead:
+            await db.execute(delete(SuperPushSubscription).where(SuperPushSubscription.endpoint.in_(dead)))
+            await db.commit()
+
+
+def send_super_push_safe(title: str, body: str, url: str = "/super/orgs") -> None:
+    """Sync-обёртка: безопасно поставить super push в задачу из любого места.
+    Подходит для вызова из BackgroundTasks / обработчиков ошибок без await."""
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(send_super_push(title, body, url))
+        else:
+            loop.run_until_complete(send_super_push(title, body, url))
+    except Exception as exc:
+        logger.warning("send_super_push_safe failed: %s", exc)

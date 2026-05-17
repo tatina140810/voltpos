@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { NavLink, Navigate, Outlet, useNavigate } from "react-router-dom";
 
+import { SuperPushButton } from "../../components/SuperPushButton";
 import { useSuperAuthStore } from "../../store/superAuth";
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
@@ -10,6 +12,17 @@ const linkClass = ({ isActive }: { isActive: boolean }) =>
 export function SuperLayout() {
   const navigate = useNavigate();
   const { token, admin, logout } = useSuperAuthStore();
+
+  // Подменяем manifest на admin при заходе в /super, возвращаем дефолтный при выходе.
+  // Так браузер при «установить как приложение» предложит «VoltPos Admin», а не «VoltPos».
+  useEffect(() => {
+    const link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+    const prevHref = link?.getAttribute("href") ?? "/manifest.json";
+    if (link) link.setAttribute("href", "/admin-manifest.json");
+    return () => {
+      if (link) link.setAttribute("href", prevHref);
+    };
+  }, []);
 
   if (!token) {
     return <Navigate to="/super/login" replace />;
@@ -32,6 +45,7 @@ export function SuperLayout() {
             </nav>
           </div>
           <div className="flex items-center gap-3 text-sm text-slate-600">
+            <SuperPushButton />
             <span>{admin?.name || admin?.email}</span>
             <button
               onClick={onLogout}

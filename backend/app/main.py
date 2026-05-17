@@ -1,11 +1,15 @@
-from fastapi import FastAPI
+import asyncio
+import logging
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from app.database import TENANT_MODELS
 from app.middleware.tenant import TenantMiddleware
 from app.models import Customer, DebtPayment, Delivery, Installment, Product, PushSubscription, Repair, Sale, StockMovement, Supplier, User, Warranty
 from app.models.cash_withdrawal import CashWithdrawal
-from app.routers import auth, cash_withdrawals, customers, deliveries, org, orders, period_expenses, products, push, reports, revisions, sales, scan, shifts, stock, suppliers, super as super_router, super_auth, warranty
+from app.routers import auth, cash_withdrawals, customers, deliveries, org, orders, period_expenses, products, push, reports, revisions, sales, scan, shifts, stock, suppliers, super as super_router, super_auth, super_push, warranty
 
 app = FastAPI(title="VoltPos API", version="0.1.0")
 
@@ -39,8 +43,30 @@ app.include_router(push.router)
 app.include_router(suppliers.router)
 app.include_router(super_auth.router)
 app.include_router(super_router.router)
+app.include_router(super_push.router)
 
 
 @app.get("/health")
 async def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# Глобальный обработчик 500 — шлёт push супер-админам с указанием эндпоинта.
+# Не блокирует сам ответ клиенту (push идёт в фоне).
+@app.exception_handler(Exception)
+async def _unhandled_exception_handler(request: Request, exc: Exception):
+    log = logging.getLogger("voltpos.errors")
+    log.exception("500 на %s %s", request.method, request.url.path)
+    # Не уведомляем про health/quota и проч. — слишком шумно.
+    skip_paths = ("/health", "/scan/quota")
+    if not any(request.url.path.endswith(p) for p in skip_paths):
+        try:
+            from app.services.push_service import send_super_push
+            asyncio.create_task(send_super_push(
+                title="⚠️ Ошибка сервера",
+                body=f"{request.method} {request.url.path}\n{type(exc).__name__}: {str(exc)[:120]}",
+                url="/super/orgs",
+            ))
+        except Exception:
+            pass
+    return JSONResponse(status_code=500, content={"detail": "Внутренняя ошибка сервера"})

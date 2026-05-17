@@ -115,15 +115,43 @@ async def _compute_shift_totals(db: AsyncSession, shift: Shift) -> dict:
     sales_count = 0
     returned_count = 0
     sales_total = _zero()  # сумма «продано» (без учёта возвратов)
+
+    # Для Sale-фулфилментов заказов: paid_* включает зачтённые предоплаты, которые
+    # физически пришли в кассу в другую смену. Чтобы не задваивать выручку этой смены,
+    # вычитаем из paid_* суммы OrderPayment с shift_id != текущая смена.
+    from app.models.order import Order, OrderPayment
+    sale_ids = [s.id for s in sales]
+    foreign_prep_by_sale: dict[int, dict[str, "Decimal"]] = {}
+    if sale_ids:
+        rows = (
+            await db.execute(
+                select(OrderPayment, Order.sale_id)
+                .join(Order, Order.id == OrderPayment.order_id)
+                .where(Order.sale_id.in_(sale_ids))
+            )
+        ).all()
+        for op_row, sale_id in rows:
+            # Учитываем только зачёты «не из этой смены» (другая смена или NULL).
+            if op_row.shift_id == shift.id:
+                continue
+            sign = Decimal(1) if op_row.kind == "deposit" else Decimal(-1)
+            agg = foreign_prep_by_sale.setdefault(
+                sale_id, {"cash": _zero(), "card": _zero(), "transfer": _zero()}
+            )
+            if op_row.method in agg:
+                agg[op_row.method] += (op_row.amount or _zero()) * sign
+
     for s in sales:
         if s.status == SaleStatus.returned:
             returned_count += 1
             continue
         sales_count += 1
         sales_total += s.total or _zero()
-        cash_in += s.paid_cash or _zero()
-        card_in += s.paid_card or _zero()
-        transfer_in += s.paid_transfer or _zero()
+        foreign = foreign_prep_by_sale.get(s.id, {"cash": _zero(), "card": _zero(), "transfer": _zero()})
+        # paid_cash минус та часть, что пришла предоплатой в другую смену.
+        cash_in += (s.paid_cash or _zero()) - foreign["cash"]
+        card_in += (s.paid_card or _zero()) - foreign["card"]
+        transfer_in += (s.paid_transfer or _zero()) - foreign["transfer"]
 
     # Инкассации/выдачи смены, разбитые по методу. Нужно чтобы посчитать
     # «должно быть» отдельно для нал/карта/перевод.

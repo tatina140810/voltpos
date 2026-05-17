@@ -123,12 +123,48 @@ async def summary_report(
             )
             target[dp.sale_id] = target.get(dp.sale_id, _zero()) + (dp.amount or _zero())
 
+    # Для Sale-фулфилментов заказов: paid_* включает зачтённые предоплаты, которые
+    # физически пришли в кассу в другой период. Чтобы не задваивать выручку периода,
+    # вычитаем из paid_* суммы OrderPayment с created_at ВНЕ запрошенного периода.
+    from app.models.order import Order, OrderPayment
+    sale_foreign_prep_cash: dict[int, Decimal] = {}
+    sale_foreign_prep_card: dict[int, Decimal] = {}
+    sale_foreign_prep_transfer: dict[int, Decimal] = {}
+    if sale_ids:
+        prep_rows = (
+            await db.execute(
+                select(OrderPayment, Order.sale_id)
+                .join(Order, Order.id == OrderPayment.order_id)
+                .where(Order.sale_id.in_(sale_ids))
+            )
+        ).all()
+        for op_row, sale_id in prep_rows:
+            # Зачёт «не из этого периода» — если создан раньше from_ или позже to.
+            op_date = op_row.created_at.date() if op_row.created_at else None
+            in_period = True
+            if op_date is not None:
+                if from_ and op_date < from_:
+                    in_period = False
+                if to and op_date > to:
+                    in_period = False
+            if in_period:
+                continue  # эта предоплата уже в prep_in/refund текущего периода
+            sign = Decimal(1) if op_row.kind == "deposit" else Decimal(-1)
+            amt = (op_row.amount or _zero()) * sign
+            if op_row.method == "cash":
+                sale_foreign_prep_cash[sale_id] = sale_foreign_prep_cash.get(sale_id, _zero()) + amt
+            elif op_row.method == "card":
+                sale_foreign_prep_card[sale_id] = sale_foreign_prep_card.get(sale_id, _zero()) + amt
+            elif op_row.method == "transfer":
+                sale_foreign_prep_transfer[sale_id] = sale_foreign_prep_transfer.get(sale_id, _zero()) + amt
+
     for s in sales:
         # «Нативная» оплата = всё что в paid_*, минус все погашения долга по этой продаже
         # (они учтены отдельно ниже, чтобы попасть в выручку именно того периода, когда заплатили).
-        native_cash = (s.paid_cash or _zero()) - sale_debt_payments_cash.get(s.id, _zero())
-        native_card = (s.paid_card or _zero()) - sale_debt_payments_card.get(s.id, _zero())
-        native_transfer = (s.paid_transfer or _zero()) - sale_debt_payments_transfer.get(s.id, _zero())
+        # И минус зачтённые предоплаты из других периодов (иначе двойной счёт с prepayments_received).
+        native_cash = (s.paid_cash or _zero()) - sale_debt_payments_cash.get(s.id, _zero()) - sale_foreign_prep_cash.get(s.id, _zero())
+        native_card = (s.paid_card or _zero()) - sale_debt_payments_card.get(s.id, _zero()) - sale_foreign_prep_card.get(s.id, _zero())
+        native_transfer = (s.paid_transfer or _zero()) - sale_debt_payments_transfer.get(s.id, _zero()) - sale_foreign_prep_transfer.get(s.id, _zero())
         revenue_cash += max(_zero(), native_cash)
         revenue_card += max(_zero(), native_card)
         revenue_transfer += max(_zero(), native_transfer)

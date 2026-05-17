@@ -10,6 +10,7 @@ from app.dependencies import require_report_pin
 from app.models.cash_withdrawal import CashWithdrawal
 from app.models.customer import Customer
 from app.models.debt_payment import DebtPayment
+from app.models.order import Order
 from app.models.product import Product
 from app.models.sale import DeliveryType, Sale, SaleStatus
 from app.models.sale_item import SaleItem
@@ -285,6 +286,29 @@ async def summary_report(
         for sid, agg in supplier_payments_by_id.items():
             agg["supplier_name"] = sup_names.get(sid)
 
+    # === 5b. Предоплаты по заказам за период ===
+    # Не выручка — это полученные авансы. Касса физически увеличивается, но profit нет.
+    from app.models.order import OrderPayment as _OP
+    op_stmt = (
+        select(_OP)
+        .join(Order, Order.id == _OP.order_id)
+        .where(Order.org_id == user.org_id)
+    )
+    if from_:
+        op_stmt = op_stmt.where(func.date(_OP.created_at) >= from_)
+    if to:
+        op_stmt = op_stmt.where(func.date(_OP.created_at) < (to + timedelta(days=1)))
+    op_rows = list((await db.execute(op_stmt)).scalars().all())
+    prep_in = {"cash": _zero(), "card": _zero(), "transfer": _zero()}
+    prep_refund = {"cash": _zero(), "card": _zero(), "transfer": _zero()}
+    for op_row in op_rows:
+        target = prep_in if op_row.kind == "deposit" else prep_refund
+        if op_row.method in target:
+            target[op_row.method] += op_row.amount or _zero()
+    prep_in_total = sum(prep_in.values(), start=_zero())
+    prep_refund_total = sum(prep_refund.values(), start=_zero())
+    prep_net = {m: prep_in[m] - prep_refund[m] for m in ("cash", "card", "transfer")}
+
     # === 6. Текущая общая задолженность (на момент запроса, по всей организации) ===
     # NB: при создании DebtPayment в routers/customers.py paid_cash/card/transfer
     # уже увеличиваются, поэтому _paid_total(s) ВКЛЮЧАЕТ погашения. Не вычитать дважды.
@@ -499,6 +523,23 @@ async def summary_report(
         "net_cash": str(net_cash),
         "net_card": str(net_card),
         "net_transfer": str(net_transfer),
+        "prepayments_received": {
+            "cash": str(prep_in["cash"]),
+            "card": str(prep_in["card"]),
+            "transfer": str(prep_in["transfer"]),
+            "total": str(prep_in_total),
+        },
+        "prepayments_refunded": {
+            "cash": str(prep_refund["cash"]),
+            "card": str(prep_refund["card"]),
+            "transfer": str(prep_refund["transfer"]),
+            "total": str(prep_refund_total),
+        },
+        "prepayments_net": {
+            "cash": str(prep_net["cash"]),
+            "card": str(prep_net["card"]),
+            "transfer": str(prep_net["transfer"]),
+        },
         "profit": {
             "revenue": str(revenue_total),
             "cost": str(cost_total),

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../lib/api";
-import { BarChart3, Boxes, Building2, ClipboardList, LogOut, Menu as MenuIcon, Package, ScanLine, ShoppingCart, Truck, UserCog, Users, Wallet, X, } from "lucide-react";
+import { BarChart3, Boxes, Building2, ClipboardList, Package as PackageIcon, LogOut, Menu as MenuIcon, Package, ScanLine, ShoppingCart, Truck, UserCog, Users, Wallet, X, } from "lucide-react";
 import { useBusinessSettings } from "../hooks/useBusinessSettings";
 import { syncOfflineSales } from "../lib/offline";
 import { useAuthStore } from "../store/auth";
@@ -21,6 +21,7 @@ const ROUTE_ICONS = {
     "/employees": UserCog,
     "/scan": ScanLine,
     "/revisions": ClipboardList,
+    "/orders": PackageIcon,
 };
 const item = (to, label) => ({ to, label, Icon: ROUTE_ICONS[to] });
 // Полный список всех пунктов меню в порядке отображения.
@@ -30,17 +31,18 @@ const ALL_ITEMS = [
     item("/stock", "Склад"),
     item("/scan", "Скан накладной"),
     item("/revisions", "Ревизия"),
+    item("/orders", "Заказы"),
     item("/suppliers", "Поставщики"),
     item("/products", "Товары"),
     item("/customers", "Клиенты"),
     item("/deliveries", "Доставки"),
-    item("/cash-withdrawals", "Инкас."),
+    item("/cash-withdrawals", "Движ. денег"),
     item("/reports", "Отчёты"),
     item("/employees", "Сотрудники"),
 ];
 // Дефолтный набор путей для каждой роли — что видит сотрудник, если владелец не настраивал.
 const DEFAULT_ALLOWED = {
-    seller: new Set(["/sale", "/customers", "/deliveries", "/cash-withdrawals"]),
+    seller: new Set(["/sale", "/customers", "/deliveries", "/cash-withdrawals", "/orders"]),
     warehouse: new Set(["/stock", "/products", "/suppliers", "/revisions"]),
     owner: new Set(ALL_ITEMS.map((m) => m.to)),
 };
@@ -108,7 +110,7 @@ export function Layout() {
     };
     // Приоритет пунктов в нижнем таб-баре: то что чаще всего нужно кассиру/владельцу.
     // Берём первые 4 по этому приоритету (если они есть в menu), остальное — в шторке «Ещё».
-    const tabPriority = ["/sale", "/stock", "/customers", "/reports", "/revisions", "/scan", "/cash-withdrawals", "/suppliers", "/products", "/deliveries", "/employees"];
+    const tabPriority = ["/sale", "/stock", "/customers", "/reports", "/orders", "/revisions", "/scan", "/cash-withdrawals", "/suppliers", "/products", "/deliveries", "/employees"];
     const ordered = tabPriority
         .map((p) => menu.find((m) => m.to === p))
         .filter((m) => Boolean(m));

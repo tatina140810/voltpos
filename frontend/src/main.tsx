@@ -18,6 +18,7 @@ import { ScanInvoicePage } from "./pages/ScanInvoice";
 import { RevisionsPage } from "./pages/Revisions";
 import { RevisionActivePage } from "./pages/RevisionActive";
 import { RevisionReportPage } from "./pages/RevisionReport";
+import { OrdersPage } from "./pages/Orders";
 import { SuperLoginPage } from "./pages/super/SuperLogin";
 import { SuperLayout } from "./pages/super/SuperLayout";
 import { SuperDashboard } from "./pages/super/SuperDashboard";
@@ -54,6 +55,7 @@ function App() {
             <Route path="/revisions" element={<RevisionsPage />} />
             <Route path="/revisions/active" element={<RevisionActivePage />} />
             <Route path="/revisions/:id/report" element={<RevisionReportPage />} />
+            <Route path="/orders" element={<OrdersPage />} />
           </Route>
           <Route path="*" element={<Navigate to="/sale" replace />} />
         </Routes>

@@ -102,6 +102,9 @@ type SummaryReport = {
   };
   net_card?: string;
   net_transfer?: string;
+  prepayments_received?: { cash: string; card: string; transfer: string; total: string };
+  prepayments_refunded?: { cash: string; card: string; transfer: string; total: string };
+  prepayments_net?: { cash: string; card: string; transfer: string };
   net_cash: string;
   by_seller: SellerRow[];
   by_day: { date: string; revenue: number; sales_count: number }[];
@@ -676,6 +679,44 @@ export function ReportsPage() {
             </section>
           ) : null}
 
+          {/* === Предоплаты за заказы (получено и возвращено) === */}
+          {data.prepayments_received && Number(data.prepayments_received.total) > 0 ? (
+            <section className="mt-4 rounded-2xl bg-white p-4 shadow">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h2 className="text-lg font-semibold">📦 Предоплаты по заказам</h2>
+                <span className="text-sm font-semibold text-blue-700">
+                  +{num(data.prepayments_received.total)} сом получено
+                </span>
+              </div>
+              <p className="mb-3 text-xs text-slate-500">
+                Это <b>не выручка</b> — авансы за товар, который ещё не отдан. Касса физически
+                увеличивается, но прибыль появится при выдаче заказа (создастся обычная продажа).
+              </p>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-xl border bg-blue-50 p-3 text-sm">
+                  <p className="text-xs text-blue-700">Получено</p>
+                  <p className="mt-1 text-xl font-bold text-blue-800">
+                    +{num(data.prepayments_received.total)} сом
+                  </p>
+                  <p className="mt-1 text-xs text-slate-600">
+                    нал {num(data.prepayments_received.cash)} · карта {num(data.prepayments_received.card)} · перевод {num(data.prepayments_received.transfer)}
+                  </p>
+                </div>
+                {data.prepayments_refunded && Number(data.prepayments_refunded.total) > 0 ? (
+                  <div className="rounded-xl border bg-red-50 p-3 text-sm">
+                    <p className="text-xs text-red-700">Возвращено (отмены)</p>
+                    <p className="mt-1 text-xl font-bold text-red-800">
+                      −{num(data.prepayments_refunded.total)} сом
+                    </p>
+                    <p className="mt-1 text-xs text-slate-600">
+                      нал {num(data.prepayments_refunded.cash)} · карта {num(data.prepayments_refunded.card)} · перевод {num(data.prepayments_refunded.transfer)}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
+
           {/* === Потери (списания) === */}
           {writeoffsQuery.data && writeoffsQuery.data.summary.count > 0 ? (
             <section className="mt-4 rounded-2xl bg-white p-4 shadow">
@@ -919,11 +960,14 @@ function AccountingSummary({
 
   // Сколько должно быть к концу периода — наличка минус инкассация, карта и
   // перевод трогаются только если из них что-то выдают (по умолчанию нет).
-  // «Должно остаться» — вычитаем только выдачи того же метода (раньше неправильно
-  // вычитали всю инкассацию из наличных).
-  const cashLeft = cashIn - inkasCash;
-  const cardLeft = cardIn - inkasCard;
-  const transferLeft = transferIn - inkasTransfer;
+  // «Должно остаться» — вычитаем только выдачи того же метода + добавляем предоплаты
+  // (они физически в кассе, хотя не в выручке).
+  const prepCash = Number(data.prepayments_net?.cash ?? 0);
+  const prepCard = Number(data.prepayments_net?.card ?? 0);
+  const prepTransfer = Number(data.prepayments_net?.transfer ?? 0);
+  const cashLeft = cashIn - inkasCash + prepCash;
+  const cardLeft = cardIn - inkasCard + prepCard;
+  const transferLeft = transferIn - inkasTransfer + prepTransfer;
 
   // Прибыль без инкассации (это просто перемещение денег, не расход бизнеса)
   // и без скидки (она уже в продаже). Плюс излишек/недостача ревизии (rev_net).

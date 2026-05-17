@@ -34,6 +34,9 @@ type ShiftReport = {
     inkas_cash?: string;
     inkas_card?: string;
     inkas_transfer?: string;
+    prepayments_cash?: string;
+    prepayments_card?: string;
+    prepayments_transfer?: string;
     opening_cash: string;
     expected_cash: string;
     expected_card?: string;
@@ -312,6 +315,30 @@ export function ShiftWidget() {
                   <tr className="border-b">
                     <td className="py-2 text-slate-600">🏦 Списано переводом</td>
                     <td className="py-2 text-right tabular-nums text-red-700">−{fmt(reportShown.totals.inkas_transfer ?? "0")}</td>
+                  </tr>
+                ) : null}
+                {Number(reportShown.totals.prepayments_cash ?? 0) !== 0 ? (
+                  <tr className="border-b">
+                    <td className="py-2 text-slate-600">📦 Предоплаты (нал)</td>
+                    <td className={`py-2 text-right tabular-nums ${Number(reportShown.totals.prepayments_cash) > 0 ? "text-blue-700" : "text-red-700"}`}>
+                      {Number(reportShown.totals.prepayments_cash) > 0 ? "+" : ""}{fmt(reportShown.totals.prepayments_cash ?? "0")}
+                    </td>
+                  </tr>
+                ) : null}
+                {Number(reportShown.totals.prepayments_card ?? 0) !== 0 ? (
+                  <tr className="border-b">
+                    <td className="py-2 text-slate-600">📦 Предоплаты (карта)</td>
+                    <td className={`py-2 text-right tabular-nums ${Number(reportShown.totals.prepayments_card) > 0 ? "text-blue-700" : "text-red-700"}`}>
+                      {Number(reportShown.totals.prepayments_card) > 0 ? "+" : ""}{fmt(reportShown.totals.prepayments_card ?? "0")}
+                    </td>
+                  </tr>
+                ) : null}
+                {Number(reportShown.totals.prepayments_transfer ?? 0) !== 0 ? (
+                  <tr className="border-b">
+                    <td className="py-2 text-slate-600">📦 Предоплаты (перевод)</td>
+                    <td className={`py-2 text-right tabular-nums ${Number(reportShown.totals.prepayments_transfer) > 0 ? "text-blue-700" : "text-red-700"}`}>
+                      {Number(reportShown.totals.prepayments_transfer) > 0 ? "+" : ""}{fmt(reportShown.totals.prepayments_transfer ?? "0")}
+                    </td>
                   </tr>
                 ) : null}
                 <tr className="border-b bg-slate-50"><td className="py-2 text-slate-600">Касса на старте</td><td className="py-2 text-right tabular-nums">{fmt(reportShown.totals.opening_cash)}</td></tr>

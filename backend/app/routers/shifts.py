@@ -164,11 +164,32 @@ async def _compute_shift_totals(db: AsyncSession, shift: Shift) -> dict:
     card_in_gross = card_in + card_refunded
     transfer_in_gross = transfer_in + transfer_refunded
 
-    # «Должно быть» по каждому методу = пришло − инкассировано/выдано тем же методом.
+    # Предоплаты по заказам в эту смену (deposit − refund). Физически меняют кассу,
+    # но это не выручка — отдельной строкой в Z-отчёте.
+    from app.models.order import OrderPayment as _OP
+    op_rows = (
+        await db.execute(
+            select(_OP).where(_OP.shift_id == shift.id)
+        )
+    ).scalars().all()
+    prep_cash = _zero()
+    prep_card = _zero()
+    prep_transfer = _zero()
+    for op_row in op_rows:
+        sign = Decimal(1) if op_row.kind == "deposit" else Decimal(-1)
+        amt = (op_row.amount or _zero()) * sign
+        if op_row.method == "cash":
+            prep_cash += amt
+        elif op_row.method == "card":
+            prep_card += amt
+        elif op_row.method == "transfer":
+            prep_transfer += amt
+
+    # «Должно быть» по каждому методу = пришло − инкассировано/выдано + предоплаты по методу.
     # Для cash добавляем opening_cash (стартовый остаток в кассе).
-    expected_cash = (shift.opening_cash or _zero()) + cash_in - inkas_cash
-    expected_card = card_in - inkas_card
-    expected_transfer = transfer_in - inkas_transfer
+    expected_cash = (shift.opening_cash or _zero()) + cash_in - inkas_cash + prep_cash
+    expected_card = card_in - inkas_card + prep_card
+    expected_transfer = transfer_in - inkas_transfer + prep_transfer
 
     return {
         "sales_count": sales_count,
@@ -187,6 +208,9 @@ async def _compute_shift_totals(db: AsyncSession, shift: Shift) -> dict:
         "inkas_cash": str(inkas_cash),
         "inkas_card": str(inkas_card),
         "inkas_transfer": str(inkas_transfer),
+        "prepayments_cash": str(prep_cash),
+        "prepayments_card": str(prep_card),
+        "prepayments_transfer": str(prep_transfer),
         "opening_cash": str(shift.opening_cash or _zero()),
         "expected_cash": str(expected_cash),
         "expected_card": str(expected_card),

@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { NavLink, Navigate, Outlet, useNavigate } from "react-router-dom";
 
 import { SuperPushButton } from "../../components/SuperPushButton";
@@ -13,16 +12,8 @@ export function SuperLayout() {
   const navigate = useNavigate();
   const { token, admin, logout } = useSuperAuthStore();
 
-  // Подменяем manifest на admin при заходе в /super, возвращаем дефолтный при выходе.
-  // Так браузер при «установить как приложение» предложит «VoltPos Admin», а не «VoltPos».
-  useEffect(() => {
-    const link = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
-    const prevHref = link?.getAttribute("href") ?? "/manifest.json";
-    if (link) link.setAttribute("href", "/admin-manifest.json");
-    return () => {
-      if (link) link.setAttribute("href", prevHref);
-    };
-  }, []);
+  // Manifest и apple-title подменяются в index.html inline-скриптом ДО загрузки React —
+  // здесь больше ничего делать не надо.
 
   if (!token) {
     return <Navigate to="/super/login" replace />;

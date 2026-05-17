@@ -5,10 +5,26 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
-    <meta name="apple-mobile-web-app-title" content="VoltPos" />
+    <meta id="apple-title" name="apple-mobile-web-app-title" content="VoltPos" />
     <link rel="apple-touch-icon" sizes="180x180" href="/logo-180.png" />
-    <link rel="manifest" href="/manifest.json" />
+    <link id="app-manifest" rel="manifest" href="/manifest.json" />
     <title>VoltPos</title>
+    <script>
+      // Подменяем manifest и apple-title ДО загрузки React — иначе iOS Safari
+      // успевает прочитать дефолтный «VoltPos» и при «Добавить на экран» ставит его,
+      // а не админский. Делаем синхронно в head.
+      (function() {
+        try {
+          if (window.location.pathname.startsWith('/super')) {
+            var m = document.getElementById('app-manifest');
+            if (m) m.setAttribute('href', '/admin-manifest.json');
+            var t = document.getElementById('apple-title');
+            if (t) t.setAttribute('content', 'VoltAdmin');
+            document.title = 'VoltPos Admin';
+          }
+        } catch (e) { /* noop */ }
+      })();
+    </script>
   </head>
   <body class="bg-slate-50">
     <div id="root"></div>
